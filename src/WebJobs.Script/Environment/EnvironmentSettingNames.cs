@@ -38,7 +38,7 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string MountEnabled = "WEBSITE_MOUNT_ENABLED";
         public const string MsiEndpoint = "MSI_ENDPOINT";
         public const string MsiSecret = "MSI_SECRET";
-
+        public const string FunctionsRuntimeScaleMonitoringEnabled = "FUNCTIONS_RUNTIME_SCALE_MONITORING_ENABLED";
         /// <summary>
         /// Environment variable dynamically set by the platform when it is safe to
         /// start specializing the host instance (e.g. file system is ready, etc.)

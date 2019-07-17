@@ -168,6 +168,12 @@ namespace Microsoft.Azure.WebJobs.Script
 
                 services.AddSingleton<IHostedService, LanguageWorkerConsoleLogService>();
                 services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, PrimaryHostCoordinator>());
+
+                if (SystemEnvironment.Instance.IsRuntimeScaleMonitoringEnabled())
+                {
+                    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FunctionsScaleMonitorService>());
+                }
+                services.TryAddSingleton<FunctionsScaleManager>();
             });
 
             RegisterFileProvisioningService(builder);

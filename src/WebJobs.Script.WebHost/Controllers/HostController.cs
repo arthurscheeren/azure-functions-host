@@ -15,6 +15,8 @@ using Microsoft.AspNetCore.Mvc.WebApiCompatShim;
 using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Azure.WebJobs.Host;
 using Microsoft.Azure.WebJobs.Host.Executors;
+using Microsoft.Azure.WebJobs.Host.Scale;
+using Microsoft.Azure.WebJobs.Script.Scale;
 using Microsoft.Azure.WebJobs.Script.WebHost.Authentication;
 using Microsoft.Azure.WebJobs.Script.WebHost.Filters;
 using Microsoft.Azure.WebJobs.Script.WebHost.Management;
@@ -106,6 +108,34 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
             _logger.Log(LogLevel.Debug, new EventId(0, "PingStatus"), message);
 
             return Ok();
+        }
+
+        [HttpPost]
+        [Route("admin/host/scale/status")]
+        [Authorize(Policy = PolicyNames.AdminAuthLevelOrInternal)]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+        [RequiresRunningHost]
+        public async Task<IActionResult> GetScaleStatus([FromBody]ScaleStatusContext context, [FromServices] FunctionsScaleManager scaleManager)
+        {
+            // if runtime scale isn't enabled return error
+            if (!_environment.IsRuntimeScaleMonitoringEnabled())
+            {
+                return BadRequest("Runtime scale monitoring is not enabled.");
+            }
+
+            // TODO: Decide what behavior should be when host is offline. When offline, host won't be running, so no
+            // scale monitors will be in DI. As is, this means a ScaleVote of None will be returned, which might be correct.
+            // When Offline, all hosts should be Offline, meaning no functions are running at all.
+
+            // TODO: decided not reuse the ScaleStatusContext model type for the AppService -> Runtime
+            // communication. Finalize this decision.
+            var vote = await scaleManager.GetScaleStatusAsync(context);
+            var scaleStatusResult = new ScaleStatusResult
+            {
+                Vote = vote
+            };
+
+            return new ObjectResult(scaleStatusResult);
         }
 
         [HttpPost]

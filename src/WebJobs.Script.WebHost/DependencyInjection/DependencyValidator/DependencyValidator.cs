@@ -8,6 +8,7 @@ using Microsoft.Azure.WebJobs.Script.Diagnostics;
 using Microsoft.Azure.WebJobs.Script.Eventing;
 using Microsoft.Azure.WebJobs.Script.FileProvisioning;
 using Microsoft.Azure.WebJobs.Script.Rpc;
+using Microsoft.Azure.WebJobs.Script.Scale;
 using Microsoft.Azure.WebJobs.Script.WebHost.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -27,7 +28,6 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.DependencyInjection
             expected.ExpectNone<IEventGenerator>();
 
             expected.Expect<ILoggerFactory, ScriptLoggerFactory>();
-
             expected.Expect<IMetricsLogger, WebHostMetricsLogger>();
 
             expected.Expect<IEventCollectorFactory>("Microsoft.Azure.WebJobs.Logging.EventCollectorFactory");
@@ -42,6 +42,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.DependencyInjection
                 .Expect<HttpInitializationService>()
                 .Expect<FileMonitoringService>()
                 .Expect<LanguageWorkerConsoleLogService>()
+                .Expect<FunctionsScaleMonitorService>()
                 .Optional<FuncAppFileProvisioningService>() // Used by powershell.
                 .Optional<JobHostService>() // Missing when host is offline.
                 .Optional<FunctionsSyncService>(); // Conditionally registered.

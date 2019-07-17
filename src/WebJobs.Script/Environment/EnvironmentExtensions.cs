@@ -43,6 +43,11 @@ namespace Microsoft.Azure.WebJobs.Script
             return environment.GetEnvironmentVariable(AzureWebsitePlaceholderMode) == "1";
         }
 
+        public static bool IsRuntimeScaleMonitoringEnabled(this IEnvironment environment)
+        {
+            return environment.GetEnvironmentVariable(EnvironmentSettingNames.FunctionsRuntimeScaleMonitoringEnabled) == "1";
+        }
+
         public static bool IsEasyAuthEnabled(this IEnvironment environment)
         {
             bool.TryParse(environment.GetEnvironmentVariable(EnvironmentSettingNames.EasyAuthEnabled), out bool isEasyAuthEnabled);
