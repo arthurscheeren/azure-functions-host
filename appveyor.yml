@@ -6,26 +6,11 @@ branches:
   - v3.x
 
 image:
-- Ubuntu
 - Visual Studio 2019 Preview
 
 max_jobs: 1
 
 for:
--
-  matrix:
-    only:
-      - image: Ubuntu
-  install:
-  - sh: >-
-      mkdir .dotnet && 
-      chmod +x dotnet-install.sh && 
-      ./dotnet-install.sh --version 2.2.202 --install-dir .dotnet && 
-      PATH=".dotnet:"$PATH && dotnet --info 
-  build_script:
-  - sh: dotnet build WebJobs.Script.sln
-  test: off
-
 -
   matrix:
     only:
