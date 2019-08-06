@@ -19,11 +19,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Rpc
 {
     public class LanguageWorkerChannelTests
     {
-        private readonly Mock<ILanguageWorkerConsoleLogSource> _mockConsoleLogger = new Mock<ILanguageWorkerConsoleLogSource>();
-        private readonly Mock<FunctionRpc.FunctionRpcBase> _mockFunctionRpcService = new Mock<FunctionRpc.FunctionRpcBase>();
-        private readonly TestRpcServer _testRpcServer = new TestRpcServer();
-        private readonly ILoggerFactory _loggerFactory = MockNullLoggerFactory.CreateLoggerFactory();
-        private readonly IEnumerable<FunctionMetadata> _functions = new List<FunctionMetadata>();
+        private readonly TestLoggerProvider _testLoggerProvider = new TestLoggerProvider();
 
         private static string _expectedLogMsg = "Outbound event subscribe event handler invoked";
 
@@ -32,9 +28,12 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Rpc
         private string _scriptRootPath = "c:\testdir";
         private IScriptEventManager _eventManager = new ScriptEventManager();
         private Mock<IMetricsLogger> _mockMetricsLogger = new Mock<IMetricsLogger>();
+        private Mock<FunctionRpc.FunctionRpcBase> _mockFunctionRpcService = new Mock<FunctionRpc.FunctionRpcBase>();
+        private TestRpcServer _testRpcServer = new TestRpcServer();
         private TestFunctionRpcService _testFunctionRpcService;
         private TestLogger _logger;
         private LanguageWorkerChannel _workerChannel;
+        private IEnumerable<FunctionMetadata> _functions = new List<FunctionMetadata>();
 
         public LanguageWorkerChannelTests()
         {
