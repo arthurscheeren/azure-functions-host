@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Mvc.Formatters;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Azure.WebJobs.Script.WebHost.Formatters;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace Microsoft.Azure.WebJobs.Script.Binding
 {
@@ -36,6 +37,8 @@ namespace Microsoft.Azure.WebJobs.Script.Binding
 
         public IDictionary<string, object> Headers { get; set; }
 
+        public List<Tuple<string, string, CookieOptions>> Cookies { get; set; }
+
         public async Task ExecuteResultAsync(ActionContext context)
         {
             HttpResponse response = context.HttpContext.Response;
@@ -54,7 +57,16 @@ namespace Microsoft.Azure.WebJobs.Script.Binding
                     }
                     else
                     {
-                        response.Headers.Add(header.Key, header.Value?.ToString() ?? string.Empty);
+                        if (response.Headers.ContainsKey(header.Key))
+                        {
+                            // Add duplicate http header to HttpContext.Items. This will be logged in ResponseContextItemsCheckMiddleware
+                            var previousHeaders = response.HttpContext.Items[ScriptConstants.AzureFunctionsDuplicateHttpHeadersKey] as string ?? string.Empty;
+                            response.HttpContext.Items[ScriptConstants.AzureFunctionsDuplicateHttpHeadersKey] = $"{previousHeaders} '{header.Key}'";
+                        }
+                        else
+                        {
+                            response.Headers.Add(header.Key, header.Value.ToString() ?? string.Empty);
+                        }
                     }
                 }
             }
@@ -62,6 +74,22 @@ namespace Microsoft.Azure.WebJobs.Script.Binding
             if (StatusCode != null)
             {
                 response.StatusCode = StatusCode.Value;
+            }
+
+            if (Cookies != null)
+            {
+                foreach (var cookie in Cookies)
+                {
+                    // Item3 (CookieOptions) should not be null, but this will behave correctly if it is
+                    if (cookie.Item3 != null)
+                    {
+                        response.Cookies.Append(cookie.Item1, cookie.Item2, cookie.Item3);
+                    }
+                    else
+                    {
+                        response.Cookies.Append(cookie.Item1, cookie.Item2);
+                    }
+                }
             }
 
             await WriteResponseBodyAsync(response, Content);

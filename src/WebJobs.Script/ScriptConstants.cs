@@ -18,6 +18,9 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string AzureFunctionsHostKey = "MS_AzureFunctionsHost";
         public const string AzureFunctionsNestedProxyCount = "MS_AzureFunctionsNestedProxyCount";
         public const string AzureFunctionsProxyResult = "MS_AzureFunctionsProxyResult";
+        public const string AzureFunctionsDuplicateHttpHeadersKey = "MS_AzureFunctionsDuplicateHttpHeaders";
+        public const string JobHostMiddlewarePipelineRequestDelegate = "MS_JobHostMiddlewarePipelineRequestDelegate";
+        public const string HstsMiddlewareRequestDelegate = "MS_HstsMiddlewareRequestDelegate";
 
         public const string LogPropertyPrimaryHostKey = "MS_PrimaryHost";
         public const string LogPropertySourceKey = "MS_Source";
@@ -47,10 +50,6 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string LogCategoryHost = "Host";
         public const string LogCategoryFunction = "Function";
         public const string LogCategoryWorker = "Worker";
-        public const string LogCategoryRpcInitializationService = "Host.RpcInitializationService";
-        public const string LogCategoryLanguageWorkerChannelManager = "Host.LanguageWorkerChannelManager";
-        public const string LogCategoryFunctionRpcService = "Host.FunctionRpcService";
-        public const string LogCategoryFunctionDispatcher = "Host.FunctionDispatcher";
 
         public const string SkipHostJsonConfigurationKey = "MS_SkipHostJsonConfiguration";
         public const string SkipHostInitializationKey = "MS_SkipHostInitialization";
@@ -78,9 +77,12 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string DefaultFunctionKeyName = "default";
         public const string ColdStartEventName = "ColdStart";
 
+        public const string FunctionsUserAgent = "AzureFunctionsRuntime";
+        public const string AntaresDefaultHostNameHeader = "WAS-DEFAULT-HOSTNAME";
         public const string AntaresLogIdHeaderName = "X-ARR-LOG-ID";
         public const string AntaresScaleOutHeaderName = "X-FUNCTION-SCALEOUT";
         public const string AntaresColdStartHeaderName = "X-MS-COLDSTART";
+        public const string SiteTokenHeaderName = "x-ms-site-restricted-token";
         public const string DynamicSku = "Dynamic";
         public const string DefaultProductionSlotName = "production";
 
@@ -89,6 +91,7 @@ namespace Microsoft.Azure.WebJobs.Script
 
         public const string FeatureFlagDisableShadowCopy = "DisableShadowCopy";
         public const string FeatureFlagsEnableDynamicExtensionLoading = "EnableDynamicExtensionLoading";
+        public const string FeatureFlagEnableActionResultHandling = "EnableActionResultHandling";
 
         public const string AdminJwtValidAudienceFormat = "https://{0}.azurewebsites.net/azurefunctions";
         public const string AdminJwtValidIssuerFormat = "https://{0}.scm.azurewebsites.net";
@@ -104,9 +107,15 @@ namespace Microsoft.Azure.WebJobs.Script
         public const int MaximumHostIdLength = 32;
         public const int DynamicSkuConnectionLimit = 50;
 
+        /// <summary>
+        /// This constant is also defined in Antares, where the limit is ultimately enforced
+        /// for settriggers calls. If we raise that limit there, we should raise here as well.
+        /// </summary>
+        public const int MaxTriggersStringLength = 102400;
+
         public const string ExtensionsProjectFileName = "extensions.csproj";
         public const string MetadataGeneratorPackageId = "Microsoft.Azure.WebJobs.Script.ExtensionsMetadataGenerator";
-        public const string MetadataGeneratorPackageVersion = "1.0.*";
+        public const string MetadataGeneratorPackageVersion = "1.1.*";
         public const string PackageReferenceElementName = "PackageReference";
         public const string PackageReferenceVersionElementName = "Version";
         public const int HostTimeoutSeconds = 30;
@@ -116,6 +125,7 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string LinuxLogEventStreamName = "MS_FUNCTION_LOGS";
         public const string LinuxMetricEventStreamName = "MS_FUNCTION_METRICS";
         public const string LinuxFunctionDetailsEventStreamName = "MS_FUNCTION_DETAILS";
+        public const string LinuxMSISpecializationStem = "/api/specialize?api-version=2017-09-01";
 
         public const string DurableTaskPropertyName = "durableTask";
         public const string DurableTaskHubName = "HubName";
@@ -125,10 +135,14 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string DefaultExtensionBundleDirectory = "FuncExtensionBundles";
         public const string ExtensionBundleDirectory = "ExtensionBundles";
         public const string ExtensionBundleDefaultSourceUri = "https://functionscdn.azureedge.net/public";
-        public const string ExtensionBundleMetadatFile = "bundle.json";
+        public const string ExtensionBundleMetadataFile = "bundle.json";
         public const string ExtensionBundleVersionIndexFile = "index.json";
+        public const string ExtensionBundleBindingMetadataFile = "bindings.json";
+        public const string ExtensionBundleTemplatesFile = "templates.json";
+        public const string ExtensionBundleResourcesFile = "Resources.json";
 
         public static readonly ImmutableArray<string> HttpMethods = ImmutableArray.Create("get", "post", "delete", "head", "patch", "put", "options");
         public static readonly ImmutableArray<string> AssemblyFileTypes = ImmutableArray.Create(".dll", ".exe");
+        public static readonly string HostUserAgent = $"azure-functions-host/{ScriptHost.Version}";
     }
 }

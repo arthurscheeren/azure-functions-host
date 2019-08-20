@@ -15,16 +15,18 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
     public sealed class DefaultSecretManagerProvider : ISecretManagerProvider
     {
         private const string FileStorage = "Files";
+        private const string BlobStorage = "Blob";
         private readonly ILogger _logger;
         private readonly IMetricsLogger _metricsLogger;
         private readonly IOptionsMonitor<ScriptApplicationHostOptions> _options;
         private readonly IHostIdProvider _hostIdProvider;
         private readonly IConfiguration _configuration;
         private readonly IEnvironment _environment;
+        private readonly HostNameProvider _hostNameProvider;
         private Lazy<ISecretManager> _secretManagerLazy;
 
         public DefaultSecretManagerProvider(IOptionsMonitor<ScriptApplicationHostOptions> options, IHostIdProvider hostIdProvider,
-            IConfiguration configuration, IEnvironment environment, ILoggerFactory loggerFactory, IMetricsLogger metricsLogger)
+            IConfiguration configuration, IEnvironment environment, ILoggerFactory loggerFactory, IMetricsLogger metricsLogger, HostNameProvider hostNameProvider)
         {
             if (loggerFactory == null)
             {
@@ -35,6 +37,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
             _hostIdProvider = hostIdProvider ?? throw new ArgumentNullException(nameof(hostIdProvider));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _environment = environment ?? throw new ArgumentNullException(nameof(environment));
+            _hostNameProvider = hostNameProvider ?? throw new ArgumentNullException(nameof(hostNameProvider));
 
             _logger = loggerFactory.CreateLogger(ScriptConstants.LogCategoryHostGeneral);
             _metricsLogger = metricsLogger ?? throw new ArgumentNullException(nameof(metricsLogger));
@@ -48,12 +51,13 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
 
         private void ResetSecretManager() => Interlocked.Exchange(ref _secretManagerLazy, new Lazy<ISecretManager>(Create));
 
-        private ISecretManager Create() => new SecretManager(CreateSecretsRepository(), _logger, _metricsLogger);
+        private ISecretManager Create() => new SecretManager(CreateSecretsRepository(), _logger, _metricsLogger, _hostNameProvider);
 
         internal ISecretsRepository CreateSecretsRepository()
         {
             string secretStorageType = Environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebJobsSecretStorageType);
             string storageString = _configuration.GetWebJobsConnectionString(ConnectionStringNames.Storage);
+            string secretStorageSas = _environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebJobsSecretStorageSas);
             if (secretStorageType != null && secretStorageType.Equals(FileStorage, StringComparison.OrdinalIgnoreCase))
             {
                 return new FileSystemSecretsRepository(_options.CurrentValue.SecretsPath);
@@ -64,15 +68,24 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
                 string azureWebJobsSecretStorageKeyVaultConnectionString = Environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebJobsSecretStorageKeyVaultConnectionString);
                 return new KeyVaultSecretsRepository(Path.Combine(_options.CurrentValue.SecretsPath, "Sentinels"), azureWebJobsSecretStorageKeyVaultName, azureWebJobsSecretStorageKeyVaultConnectionString);
             }
-            else if (storageString == null)
+            else if (secretStorageType != null && secretStorageType.Equals("kubernetes", StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException($"Secret initialization from Blob storage failed due to a missing Azure Storage connection string. If you intend to use files for secrets, add an App Setting key '{EnvironmentSettingNames.AzureWebJobsSecretStorageType}' with value '{FileStorage}'.");
+                return new KubernetesSecretsRepository(_environment, new SimpleKubernetesClient(_environment));
+            }
+            else if (secretStorageSas != null)
+            {
+                string siteSlotName = _environment.GetAzureWebsiteUniqueSlotName() ?? _hostIdProvider.GetHostIdAsync(CancellationToken.None).GetAwaiter().GetResult();
+                return new BlobStorageSasSecretsRepository(Path.Combine(_options.CurrentValue.SecretsPath, "Sentinels"), secretStorageSas, siteSlotName);
+            }
+            else if (storageString != null)
+            {
+                string siteSlotName = _environment.GetAzureWebsiteUniqueSlotName() ?? _hostIdProvider.GetHostIdAsync(CancellationToken.None).GetAwaiter().GetResult();
+                return new BlobStorageSecretsRepository(Path.Combine(_options.CurrentValue.SecretsPath, "Sentinels"), storageString, siteSlotName);
             }
             else
             {
-                string siteSlotName = _environment.GetAzureWebsiteUniqueSlotName() ?? _hostIdProvider.GetHostIdAsync(CancellationToken.None).GetAwaiter().GetResult();
-
-                return new BlobStorageSecretsRepository(Path.Combine(_options.CurrentValue.SecretsPath, "Sentinels"), storageString, siteSlotName);
+                throw new InvalidOperationException($"Secret initialization from Blob storage failed due to missing both an Azure Storage connection string and a SAS connection uri. " +
+                    $"For Blob Storage, please provide at least one of these. If you intend to use files for secrets, add an App Setting key '{EnvironmentSettingNames.AzureWebJobsSecretStorageType}' with value '{FileStorage}'.");
             }
         }
     }

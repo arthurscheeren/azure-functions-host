@@ -7,6 +7,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using Microsoft.Azure.WebJobs.Logging;
+using Microsoft.Azure.WebJobs.Script.Diagnostics.Extensions;
+using Microsoft.Azure.WebJobs.Script.Rpc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -40,7 +42,7 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
             return new HostJsonFileConfigurationProvider(this, _logger);
         }
 
-        private class HostJsonFileConfigurationProvider : ConfigurationProvider
+        public class HostJsonFileConfigurationProvider : ConfigurationProvider
         {
             private static readonly string[] WellKnownHostJsonProperties = new[]
             {
@@ -133,17 +135,15 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
 
                 ScriptApplicationHostOptions options = _configurationSource.HostOptions;
                 string hostFilePath = Path.Combine(options.ScriptPath, ScriptConstants.HostMetadataFileName);
-                string readingFileMessage = string.Format(CultureInfo.InvariantCulture, "Reading host configuration file '{0}'", hostFilePath);
                 JObject hostConfigObject = LoadHostConfig(hostFilePath);
                 InitializeHostConfig(hostFilePath, hostConfigObject);
                 string sanitizedJson = SanitizeHostJson(hostConfigObject);
-                string readFileMessage = $"Host configuration file read:{NewLine}{sanitizedJson}";
 
-                _logger.LogDebug("Host configuration applied.");
+                _logger.HostConfigApplied();
 
                 // Do not log these until after all the configuration is done so the proper filters are applied.
-                _logger.LogInformation(readingFileMessage);
-                _logger.LogInformation(readFileMessage);
+                _logger.HostConfigReading(hostFilePath);
+                _logger.HostConfigRead(sanitizedJson);
 
                 return hostConfigObject;
             }
@@ -153,7 +153,7 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
                 // If the object is empty, initialize it to include the version and write the file.
                 if (!hostConfigObject.HasValues)
                 {
-                    _logger.LogInformation($"Empty host configuration file found. Creating a default {ScriptConstants.HostMetadataFileName} file.");
+                    _logger.HostConfigEmpty();
 
                     hostConfigObject = GetDefaultHostConfigObject();
                     TryWriteHostJson(hostJsonPath, hostConfigObject);
@@ -180,7 +180,7 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
                 catch (Exception ex) when (ex is FileNotFoundException || ex is DirectoryNotFoundException)
                 {
                     // if no file exists we default the config
-                    _logger.LogInformation($"No host configuration file found. Creating a default {ScriptConstants.HostMetadataFileName} file.");
+                    _logger.HostConfigNotFound();
 
                     hostConfigObject = GetDefaultHostConfigObject();
                     TryWriteHostJson(configFilePath, hostConfigObject);
@@ -189,9 +189,16 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
                 return hostConfigObject;
             }
 
-            private static JObject GetDefaultHostConfigObject()
+            private JObject GetDefaultHostConfigObject()
             {
-                return new JObject { { "version", "2.0" } };
+                var hostJsonJObj = JObject.Parse("{'version': '2.0'}");
+                if (string.Equals(_configurationSource.Environment.GetEnvironmentVariable(LanguageWorkerConstants.FunctionWorkerRuntimeSettingName), "powershell", StringComparison.InvariantCultureIgnoreCase)
+                    && !_configurationSource.Environment.FileSystemIsReadOnly())
+                {
+                    hostJsonJObj.Add("managedDependency", JToken.Parse("{'Enabled': true}"));
+                }
+
+                return hostJsonJObj;
             }
 
             private void TryWriteHostJson(string filePath, JObject content)
@@ -204,12 +211,12 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
                     }
                     catch
                     {
-                        _logger.LogInformation($"Failed to create {ScriptConstants.HostMetadataFileName} file. Host execution will continue.");
+                        _logger.HostConfigCreationFailed();
                     }
                 }
                 else
                 {
-                    _logger.LogInformation($"File system is read-only. Skipping {ScriptConstants.HostMetadataFileName} creation.");
+                    _logger.HostConfigFileSystemReadOnly();
                 }
             }
 

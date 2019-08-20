@@ -9,6 +9,7 @@ using Microsoft.Azure.WebJobs.Extensions.Http;
 using Microsoft.Azure.WebJobs.Script.Extensions;
 using Microsoft.Azure.WebJobs.Script.WebHost.Middleware;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace Microsoft.Azure.WebJobs.Script.WebHost
 {
@@ -22,11 +23,13 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
         public static IApplicationBuilder UseWebJobsScriptHost(this IApplicationBuilder builder, IApplicationLifetime applicationLifetime, Action<WebJobsRouteBuilder> routes)
         {
             IEnvironment environment = builder.ApplicationServices.GetService<IEnvironment>() ?? SystemEnvironment.Instance;
+            IOptionsMonitor<StandbyOptions> standbyOptions = builder.ApplicationServices.GetService<IOptionsMonitor<StandbyOptions>>();
 
             builder.UseMiddleware<SystemTraceMiddleware>();
+            builder.UseMiddleware<HostnameFixupMiddleware>();
             builder.UseMiddleware<EnvironmentReadyCheckMiddleware>();
 
-            if (environment.IsPlaceholderModeEnabled())
+            if (standbyOptions.CurrentValue.InStandbyMode)
             {
                 builder.UseMiddleware<PlaceholderSpecializationMiddleware>();
             }
@@ -55,6 +58,8 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
             {
                 config.UseMiddleware<HttpThrottleMiddleware>();
             });
+            builder.UseMiddleware<ResponseContextItemsCheckMiddleware>();
+            builder.UseMiddleware<JobHostPipelineMiddleware>();
             builder.UseMiddleware<FunctionInvocationMiddleware>();
 
             // Register /admin/vfs, and /admin/zip to the VirtualFileSystem middleware.

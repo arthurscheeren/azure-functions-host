@@ -34,7 +34,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
         [Fact]
         public async Task HttpTrigger_Java_Get_Succeeds()
         {
-            await InvokeHttpTrigger("HttpTrigger");
+            await SamplesTestHelpers.InvokeHttpTrigger(_fixture, "HttpTrigger");
         }
 
         [Fact]
@@ -52,17 +52,6 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             Assert.Equal(0, result.Count());
         }
 
-        private async Task InvokeHttpTrigger(string functionName)
-        {
-            string functionKey = await _fixture.Host.GetFunctionSecretAsync($"{functionName}");
-            string uri = $"api/{functionName}?code={functionKey}&name=Mathew";
-            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
-
-            var response = await _fixture.Host.HttpClient.SendAsync(request);
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        }
-
         public class TestFixture : EndToEndTestFixture
         {
             static TestFixture()
@@ -74,9 +63,9 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             {
             }
 
-            public override void ConfigureJobHost(IWebJobsBuilder webJobsBuilder)
+            public override void ConfigureScriptHost(IWebJobsBuilder webJobsBuilder)
             {
-                base.ConfigureJobHost(webJobsBuilder);
+                base.ConfigureScriptHost(webJobsBuilder);
             }
         }
     }

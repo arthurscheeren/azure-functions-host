@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using System.Xml;
 using Microsoft.Azure.WebJobs.Script.Config;
 using Microsoft.Azure.WebJobs.Script.Description.DotNet;
+using Microsoft.Azure.WebJobs.Script.Diagnostics.Extensions;
 using Microsoft.Build.Construction;
 using Microsoft.Extensions.Logging;
 using NuGet.Frameworks;
@@ -70,6 +71,8 @@ namespace Microsoft.Azure.WebJobs.Script.Description
                     Arguments = string.Format(CultureInfo.InvariantCulture, "restore \"{0}\" --packages \"{1}\"", restoreProjectPath, nugetHome)
                 };
 
+                startInfo.Environment.Add(EnvironmentSettingNames.DotnetSkipFirstTimeExperience, "true");
+
                 var process = new Process { StartInfo = startInfo };
                 process.ErrorDataReceived += ProcessDataReceived;
                 process.OutputDataReceived += ProcessDataReceived;
@@ -94,8 +97,7 @@ namespace Microsoft.Azure.WebJobs.Script.Description
                     process.Close();
                 };
 
-                string message = "Starting packages restore";
-                _logger.LogInformation(message);
+                _logger.PackageManagerStartingPackagesRestore();
 
                 process.Start();
 
@@ -104,14 +106,7 @@ namespace Microsoft.Azure.WebJobs.Script.Description
             }
             catch (Exception exc)
             {
-                string message = $@"Package restore failed with message: '{exc.Message}'
-Function directory: {_functionDirectory}
-Project path: {projectPath}
-Packages path: {nugetHome}
-Nuget client path: {nugetFilePath}
-Lock file hash: {currentLockFileHash}";
-
-                _logger.LogError(message);
+                _logger.PackageManagerRestoreFailed(exc, _functionDirectory, projectPath, nugetHome, nugetFilePath, currentLockFileHash);
 
                 tcs.SetException(exc);
             }
@@ -238,7 +233,7 @@ Lock file hash: {currentLockFileHash}";
         private void ProcessDataReceived(object sender, DataReceivedEventArgs e)
         {
             string message = e.Data ?? string.Empty;
-            _logger.LogInformation(message);
+            _logger.PackageManagerProcessDataReceived(message);
         }
     }
 }

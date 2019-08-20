@@ -13,6 +13,11 @@ namespace Microsoft.Azure.WebJobs.Script
         // For testing
         internal static string BaseDirectory { get; set; }
 
+        public static string GetEnvironmentVariableOrDefault(this IEnvironment environment, string name, string defaultValue)
+        {
+            return environment.GetEnvironmentVariable(name) ?? defaultValue;
+        }
+
         public static bool IsAppServiceEnvironment(this IEnvironment environment)
         {
             return !string.IsNullOrEmpty(environment.GetEnvironmentVariable(AzureWebsiteInstanceId));
@@ -23,9 +28,19 @@ namespace Microsoft.Azure.WebJobs.Script
             return !environment.IsAppServiceEnvironment() && !string.IsNullOrEmpty(environment.GetEnvironmentVariable(ContainerName));
         }
 
+        public static bool IsLinuxMetricsPublishingEnabled(this IEnvironment environment)
+        {
+            return environment.IsLinuxContainerEnvironment() && string.IsNullOrEmpty(environment.GetEnvironmentVariable(ContainerStartContext));
+        }
+
         public static bool IsLinuxAppServiceEnvironment(this IEnvironment environment)
         {
             return environment.IsAppServiceEnvironment() && !string.IsNullOrEmpty(environment.GetEnvironmentVariable(FunctionsLogsMountPath));
+        }
+
+        public static bool IsLinuxHostingEnvironment(this IEnvironment environment)
+        {
+            return environment.IsLinuxContainerEnvironment() || environment.IsLinuxAppServiceEnvironment();
         }
 
         public static bool IsPlaceholderModeEnabled(this IEnvironment environment)
@@ -57,9 +72,22 @@ namespace Microsoft.Azure.WebJobs.Script
 
         public static bool IsZipDeployment(this IEnvironment environment)
         {
-            return !string.IsNullOrEmpty(environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteZipDeployment)) ||
-                !string.IsNullOrEmpty(environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteAltZipDeployment)) ||
-                !string.IsNullOrEmpty(environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteRunFromPackage));
+            // Run From Package app setting exists
+            return IsValidZipSetting(environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteZipDeployment)) ||
+                IsValidZipSetting(environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteAltZipDeployment)) ||
+                IsValidZipSetting(environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteRunFromPackage)) ||
+                IsValidZipUrl(environment.GetEnvironmentVariable(EnvironmentSettingNames.ScmRunFromPackage));
+        }
+
+        public static bool IsValidZipSetting(string appSetting)
+        {
+            // valid values are 1 or an absolute URI
+            return string.Equals(appSetting, "1") || IsValidZipUrl(appSetting);
+        }
+
+        public static bool IsValidZipUrl(string appSetting)
+        {
+            return Uri.TryCreate(appSetting, UriKind.Absolute, out Uri result);
         }
 
         public static bool IsAppServiceWindowsEnvironment(this IEnvironment environment)
@@ -70,6 +98,14 @@ namespace Microsoft.Azure.WebJobs.Script
         public static bool IsCoreToolsEnvironment(this IEnvironment environment)
         {
             return !string.IsNullOrEmpty(environment.GetEnvironmentVariable(CoreToolsEnvironment));
+        }
+
+        public static bool IsContainerEnvironment(this IEnvironment environment)
+        {
+            var runningInContainer = environment.GetEnvironmentVariable(RunningInContainer);
+            return !string.IsNullOrEmpty(runningInContainer)
+                && bool.TryParse(runningInContainer, out bool runningInContainerValue)
+                && runningInContainerValue;
         }
 
         public static bool IsPersistentFileSystemAvailable(this IEnvironment environment)
@@ -150,6 +186,25 @@ namespace Microsoft.Azure.WebJobs.Script
         public static bool IsContainerReady(this IEnvironment environment)
         {
             return !string.IsNullOrEmpty(environment.GetEnvironmentVariable(AzureWebsiteContainerReady));
+        }
+
+        public static bool IsMountEnabled(this IEnvironment environment)
+        {
+            var mountEnabled = environment.GetEnvironmentVariable(MountEnabled);
+            return !string.IsNullOrEmpty(mountEnabled) && string.Equals(mountEnabled, "1");
+        }
+
+        public static string GetKubernetesApiServerUrl(this IEnvironment environment)
+        {
+            string host = environment.GetEnvironmentVariable(KubernetesServiceHost);
+            string port = environment.GetEnvironmentVariable(KubernetesServiceHttpsPort);
+
+            if (string.IsNullOrEmpty(host) || string.IsNullOrEmpty(port))
+            {
+                throw new InvalidOperationException($"Both {KubernetesServiceHost} and {KubernetesServiceHttpsPort} are required for {nameof(GetKubernetesApiServerUrl)}.");
+            }
+
+            return $"https://{host}:{port}";
         }
     }
 }

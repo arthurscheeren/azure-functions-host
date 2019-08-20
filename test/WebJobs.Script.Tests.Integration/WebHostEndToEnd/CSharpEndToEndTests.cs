@@ -14,6 +14,7 @@ using Microsoft.Azure.WebJobs.Logging;
 using Microsoft.Azure.WebJobs.Script.Diagnostics;
 using Microsoft.Azure.WebJobs.Script.Rpc;
 using Microsoft.Azure.WebJobs.Script.WebHost.Diagnostics;
+using Microsoft.Azure.WebJobs.Script.WebHost.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.Extensions.DependencyInjection;
@@ -108,11 +109,10 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
 
             logs.Single(p => p.EndsWith($"From TraceWriter: {guid1}"));
             logs.Single(p => p.EndsWith($"From ILogger: {guid2}"));
-
-            // TODO: Re-enable once we can override the IMetricsLogger
+                        
             // Make sure we get a metric logged from both ILogger and TraceWriter
             var key = MetricsEventManager.GetAggregateKey(MetricEventNames.FunctionUserLog, "Scenarios");            
-            // Assert.Equal(2, Fixture.MetricsLogger.LoggedEvents.Where(p => p == key).Count());
+            Assert.Equal(2, Fixture.MetricsLogger.LoggedEvents.Where(p => p == key).Count());
 
             // Make sure we've gotten a log from the aggregator
             IEnumerable<LogMessage> getAggregatorLogs() => Fixture.Host.GetScriptHostLogMessages().Where(p => p.Category == LogCategories.Aggregator);
@@ -121,6 +121,13 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
 
             var aggregatorLogs = getAggregatorLogs();
             Assert.Equal(1, aggregatorLogs.Count());
+
+            // Make sure that no user logs made it to the EventGenerator (which the SystemLogger writes to)
+            IEnumerable<FunctionTraceEvent> allLogs = Fixture.EventGenerator.GetFunctionTraceEvents();
+            Assert.False(allLogs.Any(l => l.Summary.Contains("From ")));
+            Assert.False(allLogs.Any(l => l.Source.EndsWith(".User")));
+            Assert.False(allLogs.Any(l => l.Source == LanguageWorkerConstants.FunctionConsoleLogCategoryName));
+            Assert.NotEmpty(allLogs);
         }
 
         [Fact]
@@ -203,6 +210,16 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             HttpResponseMessage response = await Fixture.Host.HttpClient.GetAsync($"api/LoadScriptReference");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("TestClass", await response.Content.ReadAsStringAsync());
+        }
+
+        [Fact]
+        public async Task MissingAssemblies_ShowsHelpfulMessage()
+        {
+            HttpResponseMessage response = await Fixture.Host.HttpClient.GetAsync($"api/MissingAssemblies");
+            var logs = Fixture.Host.GetScriptHostLogMessages().Select(p => p.FormattedMessage).Where(p => p != null).ToArray();
+            var hasWarning = logs.Any(p => p.Contains("project.json' should not be used to reference NuGet packages. Try creating a 'function.proj' file instead. Learn more: https://go.microsoft.com/fwlink/?linkid=2091419"));
+            Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+            Assert.Equal(true, hasWarning);
         }
 
         [Fact]
@@ -302,6 +319,14 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             var outBlob = Fixture.TestOutputContainer.GetBlockBlobReference(blobName);
             string result = await TestHelpers.WaitForBlobAndGetStringAsync(outBlob);
             Assert.Equal(expectedValue, Utility.RemoveUtf8ByteOrderMark(result));
+        }
+
+        [Fact]
+        public async Task FunctionWithIndexingError_ReturnsError()
+        {
+            FunctionStatus status = await Fixture.Host.GetFunctionStatusAsync("FunctionIndexingError");
+            string error = status.Errors.Single();
+            Assert.Equal("Microsoft.Azure.WebJobs.Host: Error indexing method 'Functions.FunctionIndexingError'. Microsoft.Azure.WebJobs.Extensions.Storage: Storage account connection string 'setting_does_not_exist' does not exist. Make sure that it is a defined App Setting.", error);
         }
 
         //[Theory(Skip = "Not yet enabled.")]
@@ -407,9 +432,9 @@ namespace SecondaryDependency
                 primaryCompilation.Emit(Path.Combine(sharedAssembliesPath, "PrimaryDependency.dll"));
             }
 
-            public override void ConfigureJobHost(IWebJobsBuilder webJobsBuilder)
+            public override void ConfigureScriptHost(IWebJobsBuilder webJobsBuilder)
             {
-                base.ConfigureJobHost(webJobsBuilder);
+                base.ConfigureScriptHost(webJobsBuilder);
 
                 webJobsBuilder.AddAzureStorage();
                 webJobsBuilder.Services.Configure<ScriptJobHostOptions>(o =>
@@ -427,7 +452,9 @@ namespace SecondaryDependency
                         "ManualTrigger",
                         "MultipleOutputs",
                         "QueueTriggerToBlob",
-                        "Scenarios"
+                        "Scenarios",
+                        "FunctionIndexingError",
+                        "MissingAssemblies"
                     };
                 });
 

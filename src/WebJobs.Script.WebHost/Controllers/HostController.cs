@@ -19,11 +19,13 @@ using Microsoft.Azure.WebJobs.Script.WebHost.Authentication;
 using Microsoft.Azure.WebJobs.Script.WebHost.Filters;
 using Microsoft.Azure.WebJobs.Script.WebHost.Management;
 using Microsoft.Azure.WebJobs.Script.WebHost.Models;
+using Microsoft.Azure.WebJobs.Script.WebHost.Security;
 using Microsoft.Azure.WebJobs.Script.WebHost.Security.Authorization;
 using Microsoft.Azure.WebJobs.Script.WebHost.Security.Authorization.Policies;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using HttpHandler = Microsoft.Azure.WebJobs.IAsyncConverter<System.Net.Http.HttpRequestMessage, System.Net.Http.HttpResponseMessage>;
 
 namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
@@ -73,7 +75,8 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
                 State = scriptHostManager.State.ToString(),
                 Version = ScriptHost.Version,
                 VersionDetails = Utility.GetInformationalVersion(typeof(ScriptHost)),
-                Id = await hostIdProvider.GetHostIdAsync(CancellationToken.None)
+                Id = await hostIdProvider.GetHostIdAsync(CancellationToken.None),
+                ProcessUptime = (long)(DateTime.UtcNow - Process.GetCurrentProcess().StartTime).TotalMilliseconds
             };
 
             var lastError = scriptHostManager.LastError;
@@ -93,8 +96,16 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
         [HttpPost]
         [Route("admin/host/ping")]
         [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-        public IActionResult Ping()
+        public IActionResult Ping([FromServices] IScriptHostManager scriptHostManager)
         {
+            var pingStatus = new JObject
+            {
+                { "hostState", scriptHostManager.State.ToString() }
+            };
+
+            string message = $"Ping Status: {pingStatus.ToString()}";
+            _logger.Log(LogLevel.Debug, new EventId(0, "PingStatus"), message);
+
             return Ok();
         }
 
@@ -151,7 +162,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
 
         [HttpPost]
         [Route("admin/host/synctriggers")]
-        [Authorize(Policy = PolicyNames.AdminAuthLevel)]
+        [Authorize(Policy = PolicyNames.AdminAuthLevelOrInternal)]
         public async Task<IActionResult> SyncTriggers()
         {
             var result = await _functionsSyncManager.TrySyncTriggersAsync();
@@ -220,8 +231,29 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
             return Accepted();
         }
 
+        /// <summary>
+        /// This endpoint generates a temporary x-ms-site-restricted-token for core tool
+        /// to access KuduLite zipdeploy endpoint in Linux Consumption
+        /// </summary>
+        /// <returns>
+        /// 200 on token generated
+        /// 400 on non-Linux container environment
+        /// </returns>
         [HttpGet]
-        [HttpPost]
+        [Route("admin/host/token")]
+        [Authorize(Policy = PolicyNames.AdminAuthLevel)]
+        public IActionResult GetAdminToken()
+        {
+            if (!_environment.IsLinuxContainerEnvironment())
+            {
+                return BadRequest("Endpoint is only available when running in Linux Container");
+            }
+
+            string requestHeaderToken = SimpleWebTokenHelper.CreateToken(DateTime.UtcNow.AddMinutes(5));
+            return Ok(requestHeaderToken);
+        }
+
+        [AcceptVerbs("GET", "POST", "DELETE")]
         [Authorize(AuthenticationSchemes = AuthLevelAuthenticationDefaults.AuthenticationScheme)]
         [Route("runtime/webhooks/{name}/{*extra}")]
         [RequiresRunningHost]

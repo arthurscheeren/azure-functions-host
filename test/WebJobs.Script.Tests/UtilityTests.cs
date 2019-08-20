@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Dynamic;
+using System.Globalization;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -339,6 +340,37 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
             string cleanedUrl;
             Assert.Equal(cleanResult, Utility.TryCleanUrl(url, out cleanedUrl));
             Assert.Equal(expectedCleanUrl, cleanedUrl);
+        }
+
+        [Theory]
+        [InlineData("httpTrigger", true)]
+        [InlineData("manualTrigger", true)]
+        [InlineData("HttptRIGGER", true)]
+        [InlineData("MANUALtRIGGER", true)]
+        [InlineData(null, false)]
+        [InlineData("", false)]
+        [InlineData("blob", false)]
+        public void IsHttporManualTriggerTests(string triggerType, bool expectedResult)
+        {
+            Assert.Equal(expectedResult, Utility.IsHttporManualTrigger(triggerType));
+        }
+
+        [Theory]
+        [InlineData("createIsolationEnvironment", "tr-TR", true)]
+        [InlineData("HttpTrigger2", "en-US", true)]
+        [InlineData("HttptRIGGER", "ja-JP", true)]
+        [InlineData("Function-200", "ja-JP", true)]
+        [InlineData("MaNUALtRIGGER", "es-ES", true)]
+        [InlineData("MáNUALtRIGGER", "es-ES", false)]
+        [InlineData("hello!", "en-US", false)]
+        [InlineData("コード", "ja-JP", false)]
+        [InlineData("🙅", "en-US", false)]
+        public void IsValidFunctionNameTests(string functionName, string cultureInfo, bool expectedResult)
+        {
+            CultureInfo defaultCulture = Thread.CurrentThread.CurrentCulture;
+            Thread.CurrentThread.CurrentCulture = new CultureInfo(cultureInfo);
+            Assert.Equal(expectedResult, Utility.IsValidFunctionName(functionName));
+            Thread.CurrentThread.CurrentCulture = defaultCulture;
         }
     }
 }

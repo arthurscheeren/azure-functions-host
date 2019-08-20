@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the MIT License. See License.txt in the project root for license information.
 
 using System;
@@ -51,7 +51,8 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
             }
 
             // FunctionTimeout
-            ConfigureFunctionTimeout(jobHostSection, options);
+            ConfigureFunctionTimeout(options);
+
             // If we have a read only file system, override any configuration and
             // disable file watching
             if (_environment.FileSystemIsReadOnly())
@@ -67,23 +68,20 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
             options.TestDataPath = webHostOptions.TestDataPath;
         }
 
-        private void ConfigureFunctionTimeout(IConfigurationSection jobHostSection, ScriptJobHostOptions options)
+        private void ConfigureFunctionTimeout(ScriptJobHostOptions options)
         {
-            if (options.FunctionTimeout != null)
+            if (options.FunctionTimeout == null)
             {
-                ValidateTimeoutValue(options, options.FunctionTimeout);
+                options.FunctionTimeout = _environment.IsDynamic() ? DefaultFunctionTimeoutDynamic : DefaultFunctionTimeout;
+            }
+            else if (!_environment.IsDynamic() && TimeSpan.Compare(options.FunctionTimeout.Value, TimeSpan.FromDays(-1)) == 0)
+            {
+                // If a value of -1 is specified on a dedicated host, it should result in an infinite timeout
+                options.FunctionTimeout = null;
             }
             else
             {
-                TimeSpan functionTimeout = _environment.IsDynamic() ? DefaultFunctionTimeoutDynamic : DefaultFunctionTimeout;
-                string value = jobHostSection.GetValue<string>("functionTimeout");
-                if (value != null)
-                {
-                    TimeSpan requestedTimeout = TimeSpan.Parse(value, CultureInfo.InvariantCulture);
-                    ValidateTimeoutValue(options, requestedTimeout);
-                    functionTimeout = requestedTimeout;
-                }
-                options.FunctionTimeout = functionTimeout;
+                ValidateTimeoutValue(options, options.FunctionTimeout);
             }
         }
 

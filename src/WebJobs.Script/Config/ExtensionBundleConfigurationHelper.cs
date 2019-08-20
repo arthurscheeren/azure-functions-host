@@ -15,13 +15,11 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
     {
         private readonly IConfiguration _configuration;
         private readonly IEnvironment _environment;
-        private readonly IHostingEnvironment _hostingEnvironment;
 
-        public ExtensionBundleConfigurationHelper(IConfiguration configuration, IEnvironment environment, IHostingEnvironment hostingEnvironment)
+        public ExtensionBundleConfigurationHelper(IConfiguration configuration, IEnvironment environment)
         {
             _configuration = configuration;
             _environment = environment;
-            _hostingEnvironment = hostingEnvironment;
         }
 
         public void Configure(ExtensionBundleOptions options)
@@ -35,10 +33,13 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
                 ValidateBundleId(options.Id);
                 ConfigureBundleVersion(extensionBundleSection, options);
 
-                if (_environment.IsAppServiceEnvironment() || _hostingEnvironment.IsDevelopment())
+                string homeDirectory = _environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHomePath);
+                if ((_environment.IsAppServiceEnvironment()
+                    || _environment.IsLinuxContainerEnvironment()
+                    || _environment.IsContainerEnvironment())
+                    && !string.IsNullOrEmpty(homeDirectory))
                 {
-                    options.DownloadPath = Path.Combine(_environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHomePath),
-                                                   "data", "Functions", ScriptConstants.ExtensionBundleDirectory, options.Id);
+                    options.DownloadPath = Path.Combine(homeDirectory, "data", "Functions", ScriptConstants.ExtensionBundleDirectory, options.Id);
                     ConfigureProbingPaths(options);
                 }
             }
@@ -66,7 +67,7 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
 
         private void ConfigureProbingPaths(ExtensionBundleOptions options)
         {
-            if (_environment.IsAppServiceWindowsEnvironment() || _hostingEnvironment.IsDevelopment())
+            if (_environment.IsAppServiceWindowsEnvironment())
             {
                 string windowsDefaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
                                                          ScriptConstants.DefaultExtensionBundleDirectory,
@@ -75,12 +76,15 @@ namespace Microsoft.Azure.WebJobs.Script.Configuration
                 options.ProbingPaths.Add(windowsDefaultPath);
             }
 
-            if (_environment.IsLinuxAppServiceEnvironment())
+            var homeDirectory = _environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHomePath);
+            if ((_environment.IsLinuxAppServiceEnvironment()
+                || _environment.IsLinuxContainerEnvironment()
+                || _environment.IsContainerEnvironment())
+                && !string.IsNullOrEmpty(homeDirectory))
             {
-                string linuxDefaultPath = Path.Combine(Path.PathSeparator.ToString(), ScriptConstants.DefaultExtensionBundleDirectory, options.Id);
-
+                string linuxDefaultPath = Path.Combine(Path.GetPathRoot(homeDirectory), ScriptConstants.DefaultExtensionBundleDirectory, options.Id);
                 string deploymentPackageBundlePath = Path.Combine(
-                    _environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHomePath),
+                    homeDirectory,
                     "site", "wwwroot", ".azureFunctions", ScriptConstants.ExtensionBundleDirectory, options.Id);
 
                 options.ProbingPaths.Add(linuxDefaultPath);

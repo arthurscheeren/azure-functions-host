@@ -99,6 +99,37 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
         }
 
         [Fact]
+        public async Task SyncTriggers_InternalAuth_Succeeds()
+        {
+            using (new TestScopedSettings(_settingsManager, EnvironmentSettingNames.AzureWebsiteInstanceId, "testinstance"))
+            {
+                string uri = "admin/host/synctriggers";
+                HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, uri);
+                HttpResponseMessage response = await _fixture.Host.HttpClient.SendAsync(request);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            }
+        }
+
+        [Fact]
+        public async Task SyncTriggers_ExternalUnauthorized_ReturnsUnauthorized()
+        {
+            string uri = "admin/host/synctriggers";
+            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, uri);
+            HttpResponseMessage response = await _fixture.Host.HttpClient.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        [Fact]
+        public async Task SyncTriggers_AdminLevel_Succeeds()
+        {
+            string uri = "admin/host/synctriggers";
+            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, uri);
+            request.Headers.Add(AuthenticationLevelHandler.FunctionsKeyHeaderName, await _fixture.Host.GetMasterKeyAsync());
+            HttpResponseMessage response = await _fixture.Host.HttpClient.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+
+        [Fact]
         public async Task HostLog_Anonymous_Fails()
         {
             var request = new HttpRequestMessage(HttpMethod.Post, "admin/host/log");
@@ -200,7 +231,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             string content = await response.Content.ReadAsStringAsync();
             JObject jsonContent = JObject.Parse(content);
 
-            Assert.Equal(4, jsonContent.Properties().Count());
+            Assert.Equal(5, jsonContent.Properties().Count());
             AssemblyFileVersionAttribute fileVersionAttr = typeof(HostStatus).Assembly.GetCustomAttribute<AssemblyFileVersionAttribute>();
             Assert.True(((string)jsonContent["id"]).Length > 0);
             string expectedVersion = fileVersionAttr.Version;
@@ -252,7 +283,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             var hostStatus = response.Content.ReadAsAsync<HostStatus>();
 
             // verify functions can be invoked
-            await InvokeAndValidateHttpTrigger(functionName);
+            await SamplesTestHelpers.InvokeAndValidateHttpTrigger(_fixture, functionName);
 
             // verify function status is ok
             response = await GetFunctionStatusAsync(functionName);
@@ -279,7 +310,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             Assert.Null(functionStatus.Errors);
 
             // verify that when offline function requests return 503
-            response = await InvokeHttpTrigger(functionName);
+            response = await SamplesTestHelpers.InvokeHttpTrigger(_fixture, functionName);
             await VerifyOfflineResponse(response);
 
             // verify that the root returns 503 immediately when offline
@@ -296,8 +327,11 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
 
             await AwaitHostStateAsync(ScriptHostState.Running);
 
+            // need to reinitialize TestFunctionHost to reset IApplicationLifetime
+            await _fixture.InitializeAsync();
+
             // verify functions can be invoked
-            await InvokeAndValidateHttpTrigger(functionName);
+            await SamplesTestHelpers.InvokeAndValidateHttpTrigger(_fixture, functionName);
 
             // verify the same thing via admin api
             response = await AdminInvokeFunction(functionName);
@@ -501,26 +535,6 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             }
         }
 
-        private async Task InvokeAndValidateHttpTrigger(string functionName)
-        {
-            string functionKey = await _fixture.Host.GetFunctionSecretAsync($"{functionName}");
-            string uri = $"api/{functionName}?code={functionKey}&name=Mathew";
-            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
-
-            HttpResponseMessage response = await _fixture.Host.HttpClient.SendAsync(request);
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            string body = await response.Content.ReadAsStringAsync();
-            Assert.Equal("text/plain", response.Content.Headers.ContentType.MediaType);
-            Assert.Equal("Hello, Mathew", body);
-
-            // verify request also succeeds with master key
-            string masterKey = await _fixture.Host.GetMasterKeyAsync();
-            uri = $"api/{functionName}?code={masterKey}&name=Mathew";
-            request = new HttpRequestMessage(HttpMethod.Get, uri);
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        }
-
         // invoke a function via the admin invoke api
         private async Task<HttpResponseMessage> AdminInvokeFunction(string functionName, string input = null)
         {
@@ -533,16 +547,6 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
             };
             request.Content = new StringContent(jo.ToString());
             request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-            return await _fixture.Host.HttpClient.SendAsync(request);
-        }
-
-        private async Task<HttpResponseMessage> InvokeHttpTrigger(string functionName)
-        {
-            string functionKey = await _fixture.Host.GetFunctionSecretAsync($"{functionName}");
-            string uri = $"api/{functionName}?code={functionKey}&name=Mathew";
-            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/plain"));
-
             return await _fixture.Host.HttpClient.SendAsync(request);
         }
 
@@ -565,7 +569,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 string body = await response.Content.ReadAsStringAsync();
                 Assert.Equal("text/plain", response.Content.Headers.ContentType.MediaType);
-                Assert.Equal("Hello, Mathew,Amy", body);
+                Assert.Equal("Hello Mathew,Amy", body);
             }
         }
 
@@ -633,7 +637,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
                 Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
             }
         }
-        
+
         [Fact]
         public async Task HttpTriggerWithObject_Post_Succeeds()
         {
@@ -822,9 +826,9 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.EndToEnd
 
             public Mock<IScriptWebHookProvider> MockWebHookProvider { get; }
 
-            public override void ConfigureJobHost(IWebJobsBuilder webJobsBuilder)
+            public override void ConfigureScriptHost(IWebJobsBuilder webJobsBuilder)
             {
-                base.ConfigureJobHost(webJobsBuilder);
+                base.ConfigureScriptHost(webJobsBuilder);
 
                 webJobsBuilder.Services.AddSingleton<IScriptWebHookProvider>(MockWebHookProvider.Object);
 

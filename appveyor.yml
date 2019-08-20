@@ -5,8 +5,7 @@ branches:
   only:
   - dev
   - master
-  - core
-
+  
 image:
 - Ubuntu
 - Visual Studio 2017
@@ -22,7 +21,7 @@ for:
   - sh: >-
       mkdir .dotnet && 
       chmod +x dotnet-install.sh && 
-      ./dotnet-install.sh --version 2.2.102 --install-dir .dotnet && 
+      ./dotnet-install.sh --version 2.2.202 --install-dir .dotnet && 
       PATH=".dotnet:"$PATH && dotnet --info 
   build_script:
   - sh: dotnet build WebJobs.Script.sln
@@ -49,6 +48,11 @@ for:
       $hasTag = Test-Path env:APPVEYOR_REPO_TAG_NAME
       $isbuildFromMasterBranch = $env:APPVEYOR_REPO_BRANCH -eq "master"
       $includeSuffix = (-Not ($hasTag -OR $isBuildFromMasterBranch))
+      
+      if (-Not $includeSuffix) {
+        $env:Configuration = "Release"
+      }
+
       .\build.ps1 -buildNumber "$env:APPVEYOR_BUILD_NUMBER" -includeSuffix $includeSuffix
   after_build:
   - ps: >

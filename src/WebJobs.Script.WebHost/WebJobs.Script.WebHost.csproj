@@ -24,6 +24,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Content Remove="Resources\Functions\host.json" />
+    <Content Remove="Resources\Functions\proxies.json" />
     <Content Remove="Resources\Functions\WarmUp\function.json" />
   </ItemGroup>
   <ItemGroup>
@@ -50,13 +51,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.App" Version="2.2.1" />
+    <PackageReference Include="Microsoft.AspNetCore.App" Version="2.2.6" />
     <PackageReference Include="Microsoft.Azure.AppService.Proxy.Client" Version="2.0.8100001-0126c21e" />
     <PackageReference Include="Microsoft.Azure.Services.AppAuthentication" Version="1.0.3" />
-    <PackageReference Include="Microsoft.Azure.WebJobs.Host.Storage" Version="3.0.6" />
-    <PackageReference Include="Microsoft.Azure.WebJobs.Logging" Version="3.0.6" />
+    <PackageReference Include="Microsoft.Azure.WebJobs.Host.Storage" Version="3.0.12" />
+    <PackageReference Include="Microsoft.Azure.WebJobs.Logging" Version="3.0.12" />
 	  <PackageReference Include="Microsoft.Azure.KeyVault" Version="3.0.3" />
-    <PackageReference Include="Microsoft.Azure.WebSites.DataProtection" Version="2.1.88-alpha" />
+    <PackageReference Include="Microsoft.Azure.WebSites.DataProtection" Version="2.1.91-alpha" />
     <PackageReference Include="System.Net.Primitives" Version="4.3.0" />
     <PackageReference Include="WindowsAzure.Storage" Version="9.3.1" />
     <PackageReference Include="StyleCop.Analyzers" Version="1.1.0-beta004">
@@ -72,6 +73,7 @@
     <EmbeddedResource Include="Home.html" />
     <EmbeddedResource Include="Resources\app_offline.htm" />
     <EmbeddedResource Include="Resources\Functions\host.json" />
+    <EmbeddedResource Include="Resources\Functions\proxies.json" />
     <EmbeddedResource Include="Resources\Functions\WarmUp\function.json" />
     <EmbeddedResource Include="Resources\Functions\WarmUp\run.csx" />
   </ItemGroup>

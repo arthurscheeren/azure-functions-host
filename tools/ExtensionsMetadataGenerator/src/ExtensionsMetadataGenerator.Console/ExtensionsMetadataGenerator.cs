@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 #if !NET46
-using System.Runtime.Loader;
 #endif
 
 namespace ExtensionsMetadataGenerator
@@ -19,7 +18,7 @@ namespace ExtensionsMetadataGenerator
         // These assemblies are always loaded by the functions runtime and should not be listed in extensions.json
         private static readonly string[] ExcludedAssemblies = new[] { "Microsoft.Azure.WebJobs.Extensions.dll", "Microsoft.Azure.WebJobs.Extensions.Http.dll" };
 
-        public static void Generate(string sourcePath, string outputPath, Action<string> logger)
+        public static void Generate(string sourcePath, string outputPath, ConsoleLogger logger)
         {
             if (!Directory.Exists(sourcePath))
             {
@@ -29,24 +28,48 @@ namespace ExtensionsMetadataGenerator
             var extensionReferences = new List<ExtensionReference>();
 
             var targetAssemblies = Directory.EnumerateFiles(sourcePath, "*.dll")
-                .Where(f => !AssemblyShouldBeSkipped(Path.GetFileName(f)));
+                .Where(f => !AssemblyShouldBeSkipped(Path.GetFileName(f)))
+                .ToArray();
+
+            logger.LogMessage($"Found {targetAssemblies.Length} assemblies to evaluate in '{sourcePath}':");
 
             foreach (var path in targetAssemblies)
             {
-                try
+                using (logger.Indent())
                 {
-                    Assembly assembly = Assembly.LoadFrom(path);
-                    var currExtensionReferences = GenerateExtensionReferences(assembly);
-                    extensionReferences.AddRange(currExtensionReferences);
-                }
-                catch (Exception exc)
-                {
-                    logger($"Error processing {path} for extension metadata: {exc.GetType().Name} {exc.Message}");
+                    logger.LogMessage($"{Path.GetFileName(path)}");
+
+                    using (logger.Indent())
+                    {
+                        try
+                        {
+                            Assembly assembly = Assembly.LoadFrom(path);
+                            var currExtensionReferences = GenerateExtensionReferences(assembly);
+                            extensionReferences.AddRange(currExtensionReferences);
+
+                            foreach (var foundRef in currExtensionReferences)
+                            {
+                                logger.LogMessage($"Found extension: {foundRef.TypeName}");
+                            }
+                        }
+                        catch (FileNotFoundException ex)
+                        {
+                            // Don't log this as an error. This will almost always happen due to some publishing artifacts (i.e. Razor) existing
+                            // in the functions bin folder without all of their dependencies present. These will almost never have Functions extensions,
+                            // so we don't want to write out errors every time there is a build. This message can be seen with detailed logging enabled.
+                            logger.LogMessage($"Could not evaluate '{Path.GetFileName(path)}' for extension metadata. If this assembly contains a Functions extension, ensure that all dependent assemblies exist in '{sourcePath}'. If this assembly does not contain any Functions extensions, this message can be ignored. Exception message: {ex.Message}");
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError($"Could not evaluate '{Path.GetFileName(path)}' for extension metadata. Exception message: {ex.Message}");
+                        }
+                    }
                 }
             }
 
             string json = GenerateExtensionsJson(extensionReferences);
             File.WriteAllText(outputPath, json);
+            logger.LogMessage($"'{outputPath}' successfully written.");
         }
 
         public static bool AssemblyShouldBeSkipped(string fileName) => fileName.StartsWith("System", StringComparison.OrdinalIgnoreCase) || ExcludedAssemblies.Contains(fileName, StringComparer.OrdinalIgnoreCase);
@@ -58,9 +81,27 @@ namespace ExtensionsMetadataGenerator
             return json;
         }
 
+        public static bool IsWebJobsStartupAttributeType(Type attributeType)
+        {
+            Type currentType = attributeType;
+
+            while (currentType != null)
+            {
+                if (string.Equals(currentType.FullName, WebJobsStartupAttributeType, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+
+                currentType = currentType.BaseType;
+            }
+
+            return false;
+        }
+
         public static IEnumerable<ExtensionReference> GenerateExtensionReferences(Assembly assembly)
         {
-            var startupAttributes = assembly.GetCustomAttributes().Where(a => string.Equals(a.GetType().FullName, WebJobsStartupAttributeType, StringComparison.OrdinalIgnoreCase));
+            var startupAttributes = assembly.GetCustomAttributes()
+                .Where(a => IsWebJobsStartupAttributeType(a.GetType()));
 
             List<ExtensionReference> extensionReferences = new List<ExtensionReference>();
             foreach (var attribute in startupAttributes)

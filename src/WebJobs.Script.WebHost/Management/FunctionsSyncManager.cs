@@ -42,14 +42,15 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
         private readonly IHostIdProvider _hostIdProvider;
         private readonly IScriptWebHostEnvironment _webHostEnvironment;
         private readonly IEnvironment _environment;
+        private readonly HostNameProvider _hostNameProvider;
         private readonly SemaphoreSlim _syncSemaphore = new SemaphoreSlim(1, 1);
 
         private CloudBlockBlob _hashBlob;
 
-        public FunctionsSyncManager(IConfiguration configuration, IHostIdProvider hostIdProvider, IOptionsMonitor<ScriptApplicationHostOptions> applicationHostOptions, IOptions<LanguageWorkerOptions> languageWorkerOptions, ILoggerFactory loggerFactory, HttpClient httpClient, ISecretManagerProvider secretManagerProvider, IScriptWebHostEnvironment webHostEnvironment, IEnvironment environment)
+        public FunctionsSyncManager(IConfiguration configuration, IHostIdProvider hostIdProvider, IOptionsMonitor<ScriptApplicationHostOptions> applicationHostOptions, IOptions<LanguageWorkerOptions> languageWorkerOptions, ILogger<FunctionsSyncManager> logger, HttpClient httpClient, ISecretManagerProvider secretManagerProvider, IScriptWebHostEnvironment webHostEnvironment, IEnvironment environment, HostNameProvider hostNameProvider)
         {
             _applicationHostOptions = applicationHostOptions;
-            _logger = loggerFactory?.CreateLogger(ScriptConstants.LogCategoryHostGeneral);
+            _logger = logger;
             _workerConfigs = languageWorkerOptions.Value.WorkerConfigs;
             _httpClient = httpClient;
             _secretManagerProvider = secretManagerProvider;
@@ -57,6 +58,15 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
             _hostIdProvider = hostIdProvider;
             _webHostEnvironment = webHostEnvironment;
             _environment = environment;
+            _hostNameProvider = hostNameProvider;
+        }
+
+        internal bool ArmCacheEnabled
+        {
+            get
+            {
+                return _environment.GetEnvironmentVariableOrDefault(EnvironmentSettingNames.AzureWebsiteArmCacheEnabled, "1") == "1";
+            }
         }
 
         public async Task<SyncTriggersResult> TrySyncTriggersAsync(bool checkHash = false)
@@ -87,8 +97,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
                     return result;
                 }
 
-                var payload = await GetSyncTriggersPayload();
-                string json = JsonConvert.SerializeObject(payload);
+                string json = await GetSyncTriggersPayload();
 
                 bool shouldSyncTriggers = true;
                 string newHash = null;
@@ -126,10 +135,37 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
 
         internal static bool IsSyncTriggersEnvironment(IScriptWebHostEnvironment webHostEnvironment, IEnvironment environment)
         {
-            // only want to do background sync triggers when NOT
-            // in standby mode and not running locally
-            return !environment.IsCoreToolsEnvironment() &&
-                !webHostEnvironment.InStandbyMode && environment.IsContainerReady();
+            if (environment.IsCoreToolsEnvironment())
+            {
+                // don't sync triggers when running locally or not running in a cloud
+                // hosted environment
+                return false;
+            }
+
+            if (environment.GetEnvironmentVariable(EnvironmentSettingNames.WebSiteAuthEncryptionKey) == null)
+            {
+                // We don't have the encryption key required for SetTriggers,
+                // so sync calls would fail auth anyways.
+                // This might happen in when running locally for example.
+                return false;
+            }
+
+            if (webHostEnvironment.InStandbyMode)
+            {
+                // don’t sync triggers when in standby mode
+                return false;
+            }
+
+            // Windows (Dedicated/Consumption)
+            // Linux Consumption
+            if ((environment.IsAppServiceWindowsEnvironment() || environment.IsLinuxContainerEnvironment()) &&
+                !environment.IsContainerReady())
+            {
+                // container ready flag not set yet – site not fully specialized/initialized
+                return false;
+            }
+
+            return true;
         }
 
         internal async Task<string> CheckHashAsync(CloudBlockBlob hashBlob, string content)
@@ -208,15 +244,82 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
             return _hashBlob;
         }
 
-        public async Task<JArray> GetSyncTriggersPayload()
+        public async Task<string> GetSyncTriggersPayload()
         {
             var hostOptions = _applicationHostOptions.CurrentValue.ToHostOptions();
-            var functionsMetadata = WebFunctionsManager.GetFunctionsMetadata(hostOptions, _workerConfigs, _logger, includeProxies: true);
+            var functionsMetadata = WebFunctionsManager.GetFunctionsMetadata(hostOptions, _workerConfigs, _logger);
 
-            // Add trigger information used by the ScaleController
-            JObject result = new JObject();
+            // trigger information used by the ScaleController
             var triggers = await GetFunctionTriggers(functionsMetadata, hostOptions);
-            return new JArray(triggers);
+            var triggersArray = new JArray(triggers);
+
+            if (!ArmCacheEnabled)
+            {
+                // extended format is disabled - just return triggers
+                return JsonConvert.SerializeObject(triggersArray);
+            }
+
+            // Add triggers to the payload
+            JObject result = new JObject();
+            result.Add("triggers", triggersArray);
+
+            // Add functions details to the payload
+            JObject functions = new JObject();
+            string routePrefix = await WebFunctionsManager.GetRoutePrefix(hostOptions.RootScriptPath);
+            var functionDetails = await WebFunctionsManager.GetFunctionMetadataResponse(functionsMetadata, hostOptions, _hostNameProvider);
+            result.Add("functions", new JArray(functionDetails.Select(p => JObject.FromObject(p))));
+
+            // Add functions secrets to the payload
+            // Only secret types we own/control can we cache directly
+            // Encryption is handled by Antares before storage
+            var secretsStorageType = _environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebJobsSecretStorageType);
+            if (string.IsNullOrEmpty(secretsStorageType) ||
+                string.Compare(secretsStorageType, "files", StringComparison.OrdinalIgnoreCase) == 0 ||
+                string.Compare(secretsStorageType, "blob", StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                JObject secrets = new JObject();
+                result.Add("secrets", secrets);
+
+                // add host secrets
+                var hostSecretsInfo = await _secretManagerProvider.Current.GetHostSecretsAsync();
+                var hostSecrets = new JObject();
+                hostSecrets.Add("master", hostSecretsInfo.MasterKey);
+                hostSecrets.Add("function", JObject.FromObject(hostSecretsInfo.FunctionKeys));
+                hostSecrets.Add("system", JObject.FromObject(hostSecretsInfo.SystemKeys));
+                secrets.Add("host", hostSecrets);
+
+                // add function secrets
+                var functionSecrets = new JArray();
+                var httpFunctions = functionsMetadata.Where(p => !p.IsProxy && p.InputBindings.Any(q => q.IsTrigger && string.Compare(q.Type, "httptrigger", StringComparison.OrdinalIgnoreCase) == 0)).Select(p => p.Name);
+                foreach (var functionName in httpFunctions)
+                {
+                    var currSecrets = await _secretManagerProvider.Current.GetFunctionSecretsAsync(functionName);
+                    var currElement = new JObject()
+                    {
+                        { "name", functionName },
+                        { "secrets", JObject.FromObject(currSecrets) }
+                    };
+                    functionSecrets.Add(currElement);
+                }
+                secrets.Add("function", functionSecrets);
+            }
+            else
+            {
+                // TODO: handle other external key storage types
+                // like KeyVault when the feature comes online
+            }
+
+            string json = JsonConvert.SerializeObject(result);
+            if (json.Length > ScriptConstants.MaxTriggersStringLength)
+            {
+                // The settriggers call to the FE enforces a max request size
+                // limit. If we're over limit, revert to the minimal triggers
+                // format.
+                _logger.LogWarning($"SyncTriggers payload of length '{json.Length}' exceeds max length of '{ScriptConstants.MaxTriggersStringLength}'. Reverting to minimal format.");
+                return JsonConvert.SerializeObject(triggersArray);
+            }
+
+            return json;
         }
 
         internal async Task<IEnumerable<JObject>> GetFunctionTriggers(IEnumerable<FunctionMetadata> functionsMetadata, ScriptJobHostOptions hostOptions)
@@ -264,20 +367,19 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
             var config = new Dictionary<string, string>();
             if (FileUtility.FileExists(hostJsonPath))
             {
-                var hostJson = JObject.Parse(await FileUtility.ReadAsync(hostJsonPath));
-                JToken durableTaskValue;
+                var json = JObject.Parse(await FileUtility.ReadAsync(hostJsonPath));
+
+                // get the DurableTask extension config section
+                JToken extensionsValue;
+                if (json.TryGetValue("extensions", StringComparison.OrdinalIgnoreCase, out extensionsValue) && extensionsValue != null)
+                {
+                    json = (JObject)extensionsValue;
+                }
 
                 // we will allow case insensitivity given it is likely user hand edited
                 // see https://github.com/Azure/azure-functions-durable-extension/issues/111
-                //
-                // We're looking for {VALUE}
-                // {
-                //     "durableTask": {
-                //         "hubName": "{VALUE}",
-                //         "azureStorageConnectionStringName": "{VALUE}"
-                //     }
-                // }
-                if (hostJson.TryGetValue(DurableTask, StringComparison.OrdinalIgnoreCase, out durableTaskValue) && durableTaskValue != null)
+                JToken durableTaskValue;
+                if (json.TryGetValue(DurableTask, StringComparison.OrdinalIgnoreCase, out durableTaskValue) && durableTaskValue != null)
                 {
                     try
                     {
@@ -302,21 +404,16 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
             return config;
         }
 
-        internal static HttpRequestMessage BuildSetTriggersRequest()
+        internal HttpRequestMessage BuildSetTriggersRequest()
         {
             var protocol = "https";
-            // On private stamps with no ssl certificate use http instead.
-            if (Environment.GetEnvironmentVariable(EnvironmentSettingNames.SkipSslValidation) == "1")
+            if (_environment.GetEnvironmentVariable(EnvironmentSettingNames.SkipSslValidation) == "1")
             {
+                // On private stamps with no ssl certificate use http instead.
                 protocol = "http";
             }
 
-            var hostname = Environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHostName);
-            // Linux Dedicated on AppService doesn't have WEBSITE_HOSTNAME
-            hostname = string.IsNullOrWhiteSpace(hostname)
-                ? $"{Environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteName)}.azurewebsites.net"
-                : hostname;
-
+            var hostname = _hostNameProvider.Value;
             var url = $"{protocol}://{hostname}/operations/settriggers";
 
             return new HttpRequestMessage(HttpMethod.Post, url);
@@ -328,16 +425,30 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
         {
             var token = SimpleWebTokenHelper.CreateToken(DateTime.UtcNow.AddMinutes(5));
 
-            _logger.LogDebug($"SyncTriggers content: {content}");
+            string sanitizedContentString = content;
+            if (ArmCacheEnabled)
+            {
+                // sanitize the content before logging
+                var sanitizedContent = JToken.Parse(content);
+                if (sanitizedContent.Type == JTokenType.Object)
+                {
+                    ((JObject)sanitizedContent).Remove("secrets");
+                    sanitizedContentString = sanitizedContent.ToString();
+                }
+            }
 
             using (var request = BuildSetTriggersRequest())
             {
-                // This has to start with Mozilla because the frontEnd checks for it.
-                request.Headers.Add("User-Agent", "Mozilla/5.0");
-                request.Headers.Add("x-ms-site-restricted-token", token);
+                var requestId = Guid.NewGuid().ToString();
+                request.Headers.Add(ScriptConstants.AntaresLogIdHeaderName, requestId);
+                request.Headers.Add("User-Agent", ScriptConstants.FunctionsUserAgent);
+                request.Headers.Add(ScriptConstants.SiteTokenHeaderName, token);
                 request.Content = new StringContent(content, Encoding.UTF8, "application/json");
 
+                _logger.LogDebug($"Making SyncTriggers request (RequestId={requestId}, Uri={request.RequestUri.ToString()}, Content={sanitizedContentString}).");
+
                 var response = await _httpClient.SendAsync(request);
+
                 if (response.IsSuccessStatusCode)
                 {
                     _logger.LogDebug($"SyncTriggers call succeeded.");
@@ -345,7 +456,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Management
                 }
                 else
                 {
-                    string message = $"SyncTriggers call failed. StatusCode={response.StatusCode}";
+                    string message = $"SyncTriggers call failed (StatusCode={response.StatusCode}).";
                     _logger.LogDebug(message);
                     return (false, message);
                 }

@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs.Logging;
 using Microsoft.Azure.WebJobs.Script.Configuration;
+using Microsoft.Azure.WebJobs.Script.Diagnostics.Extensions;
 using Microsoft.Azure.WebJobs.Script.Properties;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -63,18 +64,20 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
 
         private async Task<string> GetBundle(HttpClient httpClient)
         {
-            string latestBundleVersion = await GetLatestMatchingBundleVersion(httpClient);
-            if (string.IsNullOrEmpty(latestBundleVersion))
-            {
-                return null;
-            }
-
             bool bundleFound = TryLocateExtensionBundle(out string bundlePath);
-            string bundleVersion = Path.GetFileName(bundlePath);
 
-            if (_environment.IsPersistentFileSystemAvailable()
-                && (!bundleFound || (Version.Parse(bundleVersion) < Version.Parse(latestBundleVersion) && _options.EnsureLatest)))
+            if ((_environment.IsAppServiceEnvironment()
+                || _environment.IsCoreToolsEnvironment()
+                || _environment.IsLinuxContainerEnvironment()
+                || _environment.IsContainerEnvironment())
+                && (!bundleFound || _options.EnsureLatest))
             {
+                string latestBundleVersion = await GetLatestMatchingBundleVersion(httpClient);
+                if (string.IsNullOrEmpty(latestBundleVersion))
+                {
+                    return null;
+                }
+
                 bundlePath = await DownloadExtensionBundleAsync(latestBundleVersion, httpClient);
             }
             return bundlePath;
@@ -92,7 +95,7 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
             for (int i = 0; i < paths.Count; i++)
             {
                 var path = paths[i];
-                _logger.LogInformation(Resources.LocateExtensionBundle, _options.Id, path);
+                _logger.LocateExtensionBundle(_options.Id, path);
                 if (FileUtility.DirectoryExists(path))
                 {
                     var bundleDirectories = FileUtility.EnumerateDirectories(path);
@@ -101,11 +104,15 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
                     if (!string.IsNullOrEmpty(version))
                     {
                         bundlePath = Path.Combine(path, version);
-                        bundleMetatdataFile = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleMetadatFile);
+                        bundleMetatdataFile = Path.Combine(bundlePath, ScriptConstants.ExtensionBundleMetadataFile);
                         if (!string.IsNullOrEmpty(bundleMetatdataFile) && FileUtility.FileExists(bundleMetatdataFile))
                         {
-                            _logger.LogInformation(Resources.ExtensionBundleFound, bundlePath);
+                            _logger.ExtensionBundleFound(bundlePath);
                             break;
+                        }
+                        else
+                        {
+                            bundlePath = null;
                         }
                     }
                 }
@@ -115,35 +122,38 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
 
         private async Task<string> DownloadExtensionBundleAsync(string version, HttpClient httpClient)
         {
+            string bundleMetatdataFile = Path.Combine(_options.DownloadPath, version, ScriptConstants.ExtensionBundleMetadataFile);
+            string bundlePath = Path.Combine(_options.DownloadPath, version);
+            if (FileUtility.FileExists(bundleMetatdataFile))
+            {
+                _logger.LogInformation($"Skipping bundle download since it already exists at path {bundlePath}");
+                return bundlePath;
+            }
+
             string zipDirectoryPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
             FileUtility.EnsureDirectoryExists(zipDirectoryPath);
 
-            string zipFilePath = Path.Combine(zipDirectoryPath, $"{version}.zip");
-            var zipUri = new Uri($"{_cdnUri}/{ScriptConstants.ExtensionBundleDirectory}/{_options.Id}/{version}/{version}.zip");
+            string zipFilePath = Path.Combine(zipDirectoryPath, $"{_options.Id}.{version}.zip");
+            var zipUri = new Uri($"{_cdnUri}/{ScriptConstants.ExtensionBundleDirectory}/{_options.Id}/{version}/{_options.Id}.{version}.zip");
 
-            string bundleMetatdataFile = null;
-            string bundlePath = null;
             if (await TryDownloadZipFileAsync(zipUri, zipFilePath, httpClient))
             {
-                bundlePath = Path.Combine(_options.DownloadPath, version);
                 FileUtility.EnsureDirectoryExists(bundlePath);
 
-                _logger.LogInformation(Resources.ExtractingBundleZip, bundlePath);
+                _logger.ExtractingBundleZip(bundlePath);
                 ZipFile.ExtractToDirectory(zipFilePath, bundlePath);
-                _logger.LogInformation(Resources.ZipExtractionComplete);
-
-                bundleMetatdataFile = Path.Combine(_options.DownloadPath, version, ScriptConstants.ExtensionBundleMetadatFile);
+                _logger.ZipExtractionComplete();
             }
             return FileUtility.FileExists(bundleMetatdataFile) ? bundlePath : null;
         }
 
         private async Task<bool> TryDownloadZipFileAsync(Uri zipUri, string filePath, HttpClient httpClient)
         {
-            _logger.LogInformation(Resources.DownloadingZip, zipUri, filePath);
+            _logger.DownloadingZip(zipUri, filePath);
             var response = await httpClient.GetAsync(zipUri);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError(Resources.ErrorDownloadingZip, zipUri, response.StatusCode, response.ReasonPhrase);
+                _logger.ErrorDownloadingZip(zipUri, response);
                 return false;
             }
 
@@ -153,19 +163,19 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
                 await content.CopyToAsync(stream);
             }
 
-            _logger.LogInformation(Resources.DownloadComplete, zipUri, filePath);
+            _logger.DownloadComplete(zipUri, filePath);
             return true;
         }
 
         private async Task<string> GetLatestMatchingBundleVersion(HttpClient httpClient)
         {
             var uri = new Uri($"{_cdnUri}/{ScriptConstants.ExtensionBundleDirectory}/{_options.Id}/{ScriptConstants.ExtensionBundleVersionIndexFile}");
-            _logger.LogInformation(Resources.FetchingVersionInfo, _options.Id, uri.Authority, uri.AbsolutePath);
+            _logger.FetchingVersionInfo(_options.Id, uri);
 
             var response = await httpClient.GetAsync(uri);
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError(Resources.ErrorFetchingVersionInfo, _options.Id);
+                _logger.ErrorFetchingVersionInfo(_options.Id);
                 return null;
             }
 
@@ -175,7 +185,7 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
 
             if (string.IsNullOrEmpty(matchingBundleVersion))
             {
-                _logger.LogInformation(Resources.MatchingBundleNotFound, _options.Version);
+                _logger.MatchingBundleNotFound(_options.Version.OriginalString);
             }
 
             return matchingBundleVersion;
@@ -187,10 +197,14 @@ namespace Microsoft.Azure.WebJobs.Script.ExtensionBundle
             {
                 var dirName = Path.GetFileName(p);
                 NuGetVersion.TryParse(dirName, out NuGetVersion version);
+                if (version != null)
+                {
+                    version = versionRange.Satisfies(version) ? version : null;
+                }
                 return version;
             }).Where(v => v != null);
 
-            return versionRange.FindBestMatch(bundleVersions)?.ToString();
+            return bundleVersions.OrderByDescending(version => version.Version).FirstOrDefault()?.ToString();
         }
     }
 }

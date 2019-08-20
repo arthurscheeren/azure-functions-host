@@ -104,6 +104,24 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
         }
 
         [Fact]
+        public void IsContainerEnvironment_valid_ReturnsTrue()
+        {
+            var environment = new TestEnvironment();
+            environment.SetEnvironmentVariable(RunningInContainer, "true");
+            Assert.True(environment.IsContainerEnvironment());
+        }
+
+        [Theory]
+        [InlineData("false")]
+        [InlineData(null)]
+        public void IsContainerEnvironment_Invalid_ReturnsFalse(string runningInContainerValue)
+        {
+            var environment = new TestEnvironment();
+            environment.SetEnvironmentVariable(RunningInContainer, runningInContainerValue);
+            Assert.False(environment.IsContainerEnvironment());
+        }
+
+        [Fact]
         public void IsPersistentStorageAvailable_IsLinuxWithoutStorage_ReturnsFalse()
         {
             var environment = new TestEnvironment();
@@ -129,6 +147,42 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
             environment.SetEnvironmentVariable(FunctionsLogsMountPath, Guid.NewGuid().ToString("N"));
             Assert.True(environment.IsLinuxAppServiceEnvWithPersistentFileSystem());
             Assert.True(environment.IsPersistentFileSystemAvailable());
+        }
+
+        [Theory]
+        [InlineData("1", true)]
+        [InlineData("https://functionstest.blob.core.windows.net/microsoft/functionapp.zip", true)]
+        [InlineData("https://functionstest.blob.core.windows.net/microsoft/functionapp.zip?sv=123434234234&other=key", true)]
+        [InlineData("/microsoft/functionapp.zip", false)]
+        [InlineData("functionapp.zip", false)]
+        [InlineData("0", false)]
+        [InlineData("", false)]
+        public void IsZipDeployment_CorrectlyValidatesSetting(string appSettingValue, bool expectedOutcome)
+        {
+            var zipSettings = new string[]
+            {
+                EnvironmentSettingNames.AzureWebsiteZipDeployment,
+                EnvironmentSettingNames.AzureWebsiteAltZipDeployment,
+                EnvironmentSettingNames.AzureWebsiteRunFromPackage
+            };
+
+            // Test each environment variable being set
+            foreach (var setting in zipSettings)
+            {
+                var environment = new TestEnvironment();
+                environment.SetEnvironmentVariable(setting, appSettingValue);
+                Assert.Equal(environment.IsZipDeployment(), expectedOutcome);
+            }
+
+            // Test multiple being set
+            var allSettingsEnvironment = new TestEnvironment();
+
+            foreach (var setting in zipSettings)
+            {
+                allSettingsEnvironment.SetEnvironmentVariable(setting, appSettingValue);
+            }
+
+            Assert.Equal(allSettingsEnvironment.IsZipDeployment(), expectedOutcome);
         }
     }
 }

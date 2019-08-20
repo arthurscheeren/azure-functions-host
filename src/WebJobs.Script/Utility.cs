@@ -11,6 +11,7 @@ using System.IO.Abstractions;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs.Script.Description;
@@ -29,6 +30,7 @@ namespace Microsoft.Azure.WebJobs.Script
         // i.e.: "f-<functionname>"
         public const string AssemblyPrefix = "f-";
         public const string AssemblySeparator = "__";
+        private static readonly Regex FunctionNameValidationRegex = new Regex(@"^[a-z][a-z0-9_\-]{0,127}$(?<!^host$)", RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
         private static readonly string UTF8ByteOrderMark = Encoding.UTF8.GetString(Encoding.UTF8.GetPreamble());
         private static readonly FilteredExpandoObjectConverter _filteredExpandoObjectConverter = new FilteredExpandoObjectConverter();
@@ -94,10 +96,13 @@ namespace Microsoft.Azure.WebJobs.Script
         /// of 2, 4, 8, 16, etc. seconds.</param>
         /// <param name="min">The minimum delay.</param>
         /// <param name="max">The maximum delay.</param>
+        /// <param name="logger">An optional logger that will emit the delay.</param>
         /// <returns>A <see cref="Task"/> representing the computed backoff interval.</returns>
-        public static async Task DelayWithBackoffAsync(int exponent, CancellationToken cancellationToken, TimeSpan? unit = null, TimeSpan? min = null, TimeSpan? max = null)
+        public static async Task DelayWithBackoffAsync(int exponent, CancellationToken cancellationToken, TimeSpan? unit = null,
+            TimeSpan? min = null, TimeSpan? max = null, ILogger logger = null)
         {
             TimeSpan delay = ComputeBackoff(exponent, unit, min, max);
+            logger?.LogDebug($"Delay is '{delay}'.");
 
             if (delay.TotalMilliseconds > 0)
             {
@@ -160,6 +165,11 @@ namespace Microsoft.Azure.WebJobs.Script
             }
 
             return functionName;
+        }
+
+        public static bool IsValidFunctionName(string functionName)
+        {
+            return FunctionNameValidationRegex.IsMatch(functionName);
         }
 
         // "Namespace.Class.Method" --> "Namespace.Class"
@@ -536,6 +546,16 @@ namespace Microsoft.Azure.WebJobs.Script
                 return true;
             }
 
+            return false;
+        }
+
+        public static bool IsHttporManualTrigger(string triggerType)
+        {
+            if (string.Compare("httptrigger", triggerType, StringComparison.OrdinalIgnoreCase) == 0 ||
+                string.Compare("manualtrigger", triggerType, StringComparison.OrdinalIgnoreCase) == 0)
+            {
+                return true;
+            }
             return false;
         }
 

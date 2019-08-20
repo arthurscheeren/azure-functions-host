@@ -3,9 +3,9 @@
 
 using System;
 using System.Collections.Generic;
-using Microsoft.ApplicationInsights;
+using System.Runtime.InteropServices;
+using Microsoft.ApplicationInsights.DependencyCollector;
 using Microsoft.ApplicationInsights.Extensibility;
-using Microsoft.ApplicationInsights.Extensibility.Implementation;
 using Microsoft.Azure.WebJobs.Host.Executors;
 using Microsoft.Azure.WebJobs.Logging;
 using Microsoft.Azure.WebJobs.Logging.ApplicationInsights;
@@ -19,6 +19,7 @@ using Microsoft.Azure.WebJobs.Script.Diagnostics;
 using Microsoft.Azure.WebJobs.Script.Eventing;
 using Microsoft.Azure.WebJobs.Script.Extensibility;
 using Microsoft.Azure.WebJobs.Script.ExtensionBundle;
+using Microsoft.Azure.WebJobs.Script.FileProvisioning;
 using Microsoft.Azure.WebJobs.Script.Grpc;
 using Microsoft.Azure.WebJobs.Script.Grpc.Messages;
 using Microsoft.Azure.WebJobs.Script.ManagedDependencies;
@@ -103,16 +104,15 @@ namespace Microsoft.Azure.WebJobs.Script
                 .AddTimers()
                 .AddManualTrigger();
 
+                var extensionBundleOptions = GetExtensionBundleOptions(context);
+                var bundleManager = new ExtensionBundleManager(extensionBundleOptions, SystemEnvironment.Instance, loggerFactory);
                 if (!skipHostInitialization)
                 {
-                    var extensionBundleOptions = GetExtensionBundleOptions(context);
-                    var bundleManager = new ExtensionBundleManager(extensionBundleOptions, SystemEnvironment.Instance, loggerFactory);
-
                     // Only set our external startup if we're not suppressing host initialization
                     // as we don't want to load user assemblies otherwise.
-                    webJobsBuilder.UseScriptExternalStartup(applicationHostOptions.ScriptPath, bundleManager);
-                    webJobsBuilder.Services.AddSingleton<IExtensionBundleManager>(_ => bundleManager);
+                    webJobsBuilder.UseScriptExternalStartup(applicationHostOptions.ScriptPath, loggerFactory, bundleManager);
                 }
+                webJobsBuilder.Services.AddSingleton<IExtensionBundleManager>(_ => bundleManager);
 
                 configureWebJobs?.Invoke(webJobsBuilder);
             }, o => o.AllowPartialHostStartup = true);
@@ -124,6 +124,8 @@ namespace Microsoft.Azure.WebJobs.Script
                 // Core WebJobs/Script Host services
                 services.AddSingleton<ScriptHost>();
                 services.AddSingleton<IFunctionDispatcher, FunctionDispatcher>();
+                services.AddSingleton<IJobHostLanguageWorkerChannelManager, JobHostLanguageWorkerChannelManager>();
+                services.AddSingleton<IFunctionDispatcherLoadBalancer, FunctionDispatcherLoadBalancer>();
                 services.AddSingleton<IScriptJobHost>(p => p.GetRequiredService<ScriptHost>());
                 services.AddSingleton<IJobHost>(p => p.GetRequiredService<ScriptHost>());
                 services.AddSingleton<IFunctionMetadataManager, FunctionMetadataManager>();
@@ -133,6 +135,7 @@ namespace Microsoft.Azure.WebJobs.Script
                 services.AddTransient<IExtensionsManager, ExtensionsManager>();
                 services.TryAddSingleton<IMetricsLogger, MetricsLogger>();
                 services.TryAddSingleton<IScriptJobHostEnvironment, ConsoleScriptJobHostEnvironment>();
+                services.AddTransient<IExtensionBundleContentProvider, ExtensionBundleContentProvider>();
 
                 // Script binding providers
                 services.TryAddEnumerable(ServiceDescriptor.Singleton<IScriptBindingProvider, WebJobsCoreScriptBindingProvider>());
@@ -163,11 +166,11 @@ namespace Microsoft.Azure.WebJobs.Script
                     AddCommonServices(services);
                 }
 
-                // Hosted services
                 services.AddSingleton<IHostedService, LanguageWorkerConsoleLogService>();
                 services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, PrimaryHostCoordinator>());
             });
 
+            RegisterFileProvisioningService(builder);
             return builder;
         }
 
@@ -183,21 +186,26 @@ namespace Microsoft.Azure.WebJobs.Script
 
             // Add Language Worker Service
             // Need to maintain the order: Add RpcInitializationService before core script host services
-            services.AddSingleton<IHostedService, RpcInitializationService>();
+            services.AddManagedHostedService<RpcInitializationService>();
             services.AddSingleton<FunctionRpc.FunctionRpcBase, FunctionRpcService>();
             services.AddSingleton<IRpcServer, GrpcServer>();
             services.TryAddSingleton<ILanguageWorkerConsoleLogSource, LanguageWorkerConsoleLogSource>();
-            services.TryAddSingleton<ILanguageWorkerChannelManager, LanguageWorkerChannelManager>();
+            services.AddSingleton<IWorkerProcessFactory, DefaultWorkerProcessFactory>();
+            services.AddSingleton<ILanguageWorkerProcessFactory, LanguageWorkerProcessFactory>();
+            services.AddSingleton<ILanguageWorkerChannelFactory, LanguageWorkerChannelFactory>();
+            services.TryAddSingleton<IWebHostLanguageWorkerChannelManager, WebHostLanguageWorkerChannelManager>();
             services.TryAddSingleton<IDebugManager, DebugManager>();
             services.TryAddSingleton<IDebugStateProvider, DebugStateProvider>();
             services.TryAddSingleton<IEnvironment>(SystemEnvironment.Instance);
             services.TryAddSingleton<HostPerformanceManager>();
             services.ConfigureOptions<HostHealthMonitorOptionsSetup>();
+            AddProcessRegistry(services);
         }
 
-        public static IWebJobsBuilder UseScriptExternalStartup(this IWebJobsBuilder builder, string rootScriptPath, IExtensionBundleManager extensionBundleManager)
+        public static IWebJobsBuilder UseScriptExternalStartup(this IWebJobsBuilder builder, string rootScriptPath, ILoggerFactory loggerFactory, IExtensionBundleManager extensionBundleManager)
         {
-            return builder.UseExternalStartup(new ScriptStartupTypeLocator(rootScriptPath, extensionBundleManager));
+            var logger = loggerFactory.CreateLogger<ScriptStartupTypeLocator>() ?? throw new ArgumentNullException(nameof(loggerFactory));
+            return builder.UseExternalStartup(new ScriptStartupTypeLocator(rootScriptPath, logger, extensionBundleManager));
         }
 
         public static IHostBuilder SetAzureFunctionsEnvironment(this IHostBuilder builder)
@@ -233,34 +241,71 @@ namespace Microsoft.Azure.WebJobs.Script
         internal static void ConfigureApplicationInsights(HostBuilderContext context, ILoggingBuilder builder)
         {
             string appInsightsKey = context.Configuration[EnvironmentSettingNames.AppInsightsInstrumentationKey];
-            if (!string.IsNullOrEmpty(appInsightsKey))
+
+            // Initializing AppInsights services during placeholder mode as well to avoid the cost of JITting these objects during specialization
+            if (!string.IsNullOrEmpty(appInsightsKey) || SystemEnvironment.Instance.IsPlaceholderModeEnabled())
             {
-                builder.AddApplicationInsights(o => o.InstrumentationKey = appInsightsKey);
+                builder.AddApplicationInsightsWebJobs(o => o.InstrumentationKey = appInsightsKey);
                 builder.Services.ConfigureOptions<ApplicationInsightsLoggerOptionsSetup>();
 
-                builder.Services.AddSingleton<ISdkVersionProvider, ApplicationInsightsSdkVersionProvider>();
+                builder.Services.AddSingleton<ISdkVersionProvider, FunctionsSdkVersionProvider>();
 
-                // Override the default SdkVersion with the functions key
-                builder.Services.AddSingleton<TelemetryClient>(provider =>
+                builder.Services.AddSingleton<ITelemetryInitializer, ScriptTelemetryInitializer>();
+
+                if (SystemEnvironment.Instance.IsPlaceholderModeEnabled())
                 {
-                    TelemetryConfiguration configuration = provider.GetService<TelemetryConfiguration>();
-                    TelemetryClient client = new TelemetryClient(configuration);
+                    for (int i = 0; i < builder.Services.Count; i++)
+                    {
+                        // This is to avoid possible race condition during specialization when disposing old AI listeners created during placeholder mode.
+                        if (builder.Services[i].ServiceType == typeof(ITelemetryModule) && builder.Services[i].ImplementationFactory?.Method.ReturnType == typeof(DependencyTrackingTelemetryModule))
+                        {
+                            builder.Services.RemoveAt(i);
+                            break;
+                        }
+                    }
 
-                    ISdkVersionProvider versionProvider = provider.GetService<ISdkVersionProvider>();
-                    client.Context.GetInternalContext().SdkVersion = versionProvider.GetSdkVersion();
-
-                    return client;
-                });
+                    // Disable auto-http tracking when in placeholder mode.
+                    builder.Services.Configure<ApplicationInsightsLoggerOptions>(o =>
+                    {
+                        o.HttpAutoCollectionOptions.EnableHttpTriggerExtendedInfoCollection = false;
+                    });
+                }
             }
         }
 
         internal static ExtensionBundleOptions GetExtensionBundleOptions(HostBuilderContext context)
         {
             var options = new ExtensionBundleOptions();
-            var optionsSetup = new ExtensionBundleConfigurationHelper(context.Configuration, SystemEnvironment.Instance, context.HostingEnvironment);
+            var optionsSetup = new ExtensionBundleConfigurationHelper(context.Configuration, SystemEnvironment.Instance);
             context.Configuration.Bind(options);
             optionsSetup.Configure(options);
             return options;
+        }
+
+        private static void RegisterFileProvisioningService(IHostBuilder builder)
+        {
+            if (string.Equals(Environment.GetEnvironmentVariable(LanguageWorkerConstants.FunctionWorkerRuntimeSettingName), "powershell"))
+            {
+                builder.ConfigureServices(services =>
+                {
+                    services.AddSingleton<IFuncAppFileProvisionerFactory, FuncAppFileProvisionerFactory>();
+                    services.AddSingleton<IHostedService, FuncAppFileProvisioningService>();
+                });
+            }
+        }
+
+        private static void AddProcessRegistry(IServiceCollection services)
+        {
+            // W3WP already manages job objects
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                && !ScriptSettingsManager.Instance.IsAppServiceEnvironment)
+            {
+                services.AddSingleton<IProcessRegistry, JobObjectRegistry>();
+            }
+            else
+            {
+                services.AddSingleton<IProcessRegistry, EmptyProcessRegistry>();
+            }
         }
     }
 }

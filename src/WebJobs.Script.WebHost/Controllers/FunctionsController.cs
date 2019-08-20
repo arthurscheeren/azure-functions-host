@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.IO.Abstractions;
 using System.IO.Compression;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -34,7 +33,6 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
         private readonly IWebFunctionsManager _functionsManager;
         private readonly IWebJobsRouter _webJobsRouter;
         private readonly ILogger _logger;
-        private static readonly Regex FunctionNameValidationRegex = new Regex(@"^[a-z][a-z0-9_\-]{0,127}$(?<!^host$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         public FunctionsController(IWebFunctionsManager functionsManager, IWebJobsRouter webJobsRouter, ILoggerFactory loggerFactory)
         {
@@ -48,7 +46,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
         [Authorize(Policy = PolicyNames.AdminAuthLevel)]
         public async Task<IActionResult> List(bool includeProxies = false)
         {
-            var result = await _functionsManager.GetFunctionsMetadata(Request, includeProxies);
+            var result = await _functionsManager.GetFunctionsMetadata(includeProxies);
             return Ok(result);
         }
 
@@ -69,7 +67,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
         [Authorize(Policy = PolicyNames.AdminAuthLevel)]
         public async Task<IActionResult> CreateOrUpdate(string name, [FromBody] FunctionMetadataResponse functionMetadata)
         {
-            if (!FunctionNameValidationRegex.IsMatch(name))
+            if (!Utility.IsValidFunctionName(name))
             {
                 return BadRequest($"{name} is not a valid function name");
             }
@@ -108,7 +106,19 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
             {
                 { inputParameter.Name, invocation.Input }
             };
-            Task.Run(() => scriptHost.CallAsync(function.Name, arguments));
+
+            Task.Run(async () =>
+            {
+                IDictionary<string, object> loggerScope = new Dictionary<string, object>
+                {
+                    { "MS_IgnoreActivity", null }
+                };
+
+                using (_logger.BeginScope(loggerScope))
+                {
+                    await scriptHost.CallAsync(function.Name, arguments);
+                }
+            });
 
             return Accepted();
         }
@@ -132,7 +142,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost.Controllers
             {
                 // if we don't have any errors registered, make sure the function exists
                 // before returning empty errors
-                var result = await _functionsManager.GetFunctionsMetadata(Request, includeProxies: true);
+                var result = await _functionsManager.GetFunctionsMetadata(includeProxies: true);
                 var function = result.FirstOrDefault(p => p.Name.ToLowerInvariant() == name.ToLowerInvariant());
                 if (function == null)
                 {

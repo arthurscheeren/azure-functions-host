@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Azure.WebJobs.Hosting;
 using Microsoft.Azure.WebJobs.Script.Description;
+using Microsoft.Azure.WebJobs.Script.Diagnostics.Extensions;
 using Microsoft.Azure.WebJobs.Script.ExtensionBundle;
 using Microsoft.Azure.WebJobs.Script.Models;
 using Microsoft.Azure.WebJobs.Script.Properties;
@@ -31,12 +32,7 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
 
         private static string[] _builtinExtensionAssemblies = GetBuiltinExtensionAssemblies();
 
-        public ScriptStartupTypeLocator(string rootScriptPath, IExtensionBundleManager extensionBundleManager)
-            : this(rootScriptPath, NullLogger.Instance, extensionBundleManager)
-        {
-        }
-
-        public ScriptStartupTypeLocator(string rootScriptPath, ILogger logger, IExtensionBundleManager extensionBundleManager)
+        public ScriptStartupTypeLocator(string rootScriptPath, ILogger<ScriptStartupTypeLocator> logger, IExtensionBundleManager extensionBundleManager)
         {
             _rootScriptPath = rootScriptPath ?? throw new ArgumentNullException(nameof(rootScriptPath));
             _extensionBundleManager = extensionBundleManager ?? throw new ArgumentNullException(nameof(extensionBundleManager));
@@ -69,10 +65,10 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
                 string extensionBundlePath = await _extensionBundleManager.GetExtensionBundlePath();
                 if (string.IsNullOrEmpty(extensionBundlePath))
                 {
-                    _logger.LogError(Resources.ErrorLoadingExtensionBundle);
+                    _logger.ScriptStartUpErrorLoadingExtensionBundle();
                     return null;
                 }
-                _logger.LogInformation(Resources.LoadingExtensionBundle, extensionBundlePath);
+                _logger.ScriptStartUpLoadingExtensionBundle(extensionBundlePath);
                 binPath = Path.Combine(extensionBundlePath, "bin");
             }
             else
@@ -90,7 +86,7 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
             foreach (var item in extensionItems)
             {
                 string startupExtensionName = item.Name ?? item.TypeName;
-                _logger.LogInformation($"Loading startup extension '{startupExtensionName}'");
+                _logger.ScriptStartUpLoadingStartUpExtension(startupExtensionName);
 
                 // load the Type for each startup extension into the function assembly load context
                 Type extensionType = Type.GetType(item.TypeName,
@@ -98,7 +94,7 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
                     {
                         if (_builtinExtensionAssemblies.Contains(assemblyName.Name, StringComparer.OrdinalIgnoreCase))
                         {
-                            _logger.LogWarning($"The extension startup type '{item.TypeName}' belongs to a builtin extension");
+                            _logger.ScriptStartUpBelongExtension(item.TypeName);
                             return null;
                         }
 
@@ -123,17 +119,18 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
                     },
                     (assembly, typeName, ignoreCase) =>
                     {
+                        _logger.ScriptStartUpLoadedExtension(startupExtensionName, assembly.GetName().Version.ToString());
                         return assembly?.GetType(typeName, false, ignoreCase);
                     }, false, true);
 
                 if (extensionType == null)
                 {
-                    _logger.LogWarning($"Unable to load startup extension '{startupExtensionName}' (Type: '{item.TypeName}'). The type does not exist. Please validate the type and assembly names.");
+                    _logger.ScriptStartUpUnableToLoadExtension(startupExtensionName, item.TypeName);
                     continue;
                 }
                 if (!typeof(IWebJobsStartup).IsAssignableFrom(extensionType))
                 {
-                    _logger.LogWarning($"Type '{item.TypeName}' is not a valid startup extension. The type does not implement {nameof(IWebJobsStartup)}.");
+                    _logger.ScriptStartUpTypeIsNotValid(item.TypeName, nameof(IWebJobsStartup));
                     continue;
                 }
 
@@ -157,7 +154,7 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
                 var extensionItems = extensionMetadata["extensions"]?.ToObject<List<ExtensionReference>>();
                 if (extensionItems == null)
                 {
-                    _logger.LogError($"Unable to parse extensions metadata file '{metadataFilePath}'. Missing 'extensions' property.");
+                    _logger.ScriptStartUpUnableParseMetadataMissingProperty(metadataFilePath);
                     return Array.Empty<ExtensionReference>();
                 }
 
@@ -165,7 +162,7 @@ namespace Microsoft.Azure.WebJobs.Script.DependencyInjection
             }
             catch (JsonReaderException exc)
             {
-                _logger.LogError(exc, $"Unable to parse extensions metadata file '{metadataFilePath}'");
+                _logger.ScriptStartUpUnableParseMetadata(exc, metadataFilePath);
 
                 return Array.Empty<ExtensionReference>();
             }

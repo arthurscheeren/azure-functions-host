@@ -8,9 +8,9 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.IO.Abstractions;
 using System.Linq;
-using System.Text.RegularExpressions;
 using Microsoft.Azure.WebJobs.Logging;
 using Microsoft.Azure.WebJobs.Script.Description;
+using Microsoft.Azure.WebJobs.Script.Diagnostics.Extensions;
 using Microsoft.Azure.WebJobs.Script.Rpc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -20,7 +20,6 @@ namespace Microsoft.Azure.WebJobs.Script
 {
     public class FunctionMetadataManager : IFunctionMetadataManager
     {
-        private static readonly Regex FunctionNameValidationRegex = new Regex(@"^[a-z][a-z0-9_\-]{0,127}$(?<!^host$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private readonly Dictionary<string, ICollection<string>> _functionErrors = new Dictionary<string, ICollection<string>>();
         private readonly Lazy<ImmutableArray<FunctionMetadata>> _metadata;
         private readonly IEnumerable<WorkerConfig> _workerConfigs;
@@ -45,9 +44,9 @@ namespace Microsoft.Azure.WebJobs.Script
         /// </summary>
         private ImmutableArray<FunctionMetadata> LoadFunctionMetadata()
         {
-            _logger.LogInformation("Loading functions metadata");
+            _logger.FunctionMetadataManagerLoadingFunctionsMetadata();
             Collection<FunctionMetadata> functionMetadata = ReadFunctionsMetadata();
-            _logger.LogInformation($"{functionMetadata.Count} functions loaded");
+            _logger.FunctionMetadataManagerFunctionsLoaded(functionMetadata.Count);
 
             return functionMetadata.ToImmutableArray();
         }
@@ -130,7 +129,7 @@ namespace Microsoft.Azure.WebJobs.Script
 
         internal static void ValidateName(string name, bool isProxy = false)
         {
-            if (!FunctionNameValidationRegex.IsMatch(name))
+            if (!Utility.IsValidFunctionName(name))
             {
                 throw new InvalidOperationException(string.Format("'{0}' is not a valid {1} name.", name, isProxy ? "proxy" : "function"));
             }

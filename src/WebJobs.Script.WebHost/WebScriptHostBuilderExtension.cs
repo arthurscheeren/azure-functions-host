@@ -7,16 +7,16 @@ using Microsoft.Azure.WebJobs.Host.Executors;
 using Microsoft.Azure.WebJobs.Host.Loggers;
 using Microsoft.Azure.WebJobs.Host.Timers;
 using Microsoft.Azure.WebJobs.Script.Diagnostics;
+using Microsoft.Azure.WebJobs.Script.Middleware;
 using Microsoft.Azure.WebJobs.Script.WebHost.Configuration;
 using Microsoft.Azure.WebJobs.Script.WebHost.DependencyInjection;
 using Microsoft.Azure.WebJobs.Script.WebHost.Diagnostics;
 using Microsoft.Azure.WebJobs.Script.WebHost.Management;
+using Microsoft.Azure.WebJobs.Script.WebHost.Middleware;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 
 namespace Microsoft.Azure.WebJobs.Script.WebHost
 {
@@ -26,12 +26,16 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
            IServiceScopeFactory rootScopeFactory, ScriptApplicationHostOptions webHostOptions, Action<IWebJobsBuilder> configureWebJobs = null)
         {
             ILoggerFactory configLoggerFactory = rootServiceProvider.GetService<ILoggerFactory>();
-            builder.UseServiceProviderFactory(new JobHostScopedServiceProviderFactory(rootServiceProvider, rootScopeFactory))
+            IDependencyValidator validator = rootServiceProvider.GetService<IDependencyValidator>();
+
+            builder.UseServiceProviderFactory(new JobHostScopedServiceProviderFactory(rootServiceProvider, rootScopeFactory, validator))
                 .ConfigureServices(services =>
                 {
                     // register default configuration
                     // must happen before the script host is added below
                     services.ConfigureOptions<HttpOptionsSetup>();
+                    services.ConfigureOptions<CustomHttpHeadersOptionsSetup>();
+                    services.ConfigureOptions<HostHstsOptionsSetup>();
                 })
                 .AddScriptHost(webHostOptions, configLoggerFactory, webJobsBuilder =>
                 {
@@ -52,21 +56,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
 
                     loggingBuilder.AddWebJobsSystem<SystemLoggerProvider>();
                     loggingBuilder.Services.AddSingleton<ILoggerProvider, UserLogMetricsLoggerProvider>();
-                    loggingBuilder.Services.AddSingleton<ILoggerProvider>(services =>
-                    {
-                        IEnvironment environment = services.GetService<IEnvironment>();
-                        IScriptWebHostEnvironment hostEnvironment = services.GetService<IScriptWebHostEnvironment>();
-
-                        if (!hostEnvironment.InStandbyMode &&
-                            !string.IsNullOrEmpty(environment.GetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHostName)))
-                        {
-                            IEventGenerator eventGenerator = services.GetService<IEventGenerator>();
-                            IOptions<ScriptJobHostOptions> options = services.GetService<IOptions<ScriptJobHostOptions>>();
-                            return new AzureMonitorDiagnosticLoggerProvider(options, eventGenerator, environment);
-                        }
-
-                        return NullLoggerProvider.Instance;
-                    });
+                    loggingBuilder.Services.AddSingleton<ILoggerProvider, AzureMonitorDiagnosticLoggerProvider>();
 
                     ConfigureRegisteredBuilders(loggingBuilder, rootServiceProvider);
                 })
@@ -81,12 +71,15 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
 
                     services.AddSingleton<HttpRequestQueue>();
                     services.AddSingleton<IHostLifetime, JobHostHostLifetime>();
-                    services.TryAddSingleton<IWebJobsExceptionHandler, WebScriptHostExceptionHandler>();
+                    services.AddSingleton<IWebJobsExceptionHandler, WebScriptHostExceptionHandler>();
                     services.AddSingleton<IScriptJobHostEnvironment, WebScriptJobHostEnvironment>();
 
                     services.AddSingleton<DefaultScriptWebHookProvider>();
                     services.TryAddSingleton<IScriptWebHookProvider>(p => p.GetService<DefaultScriptWebHookProvider>());
                     services.TryAddSingleton<IWebHookProvider>(p => p.GetService<DefaultScriptWebHookProvider>());
+                    services.TryAddSingleton<IJobHostMiddlewarePipeline, DefaultMiddlewarePipeline>();
+                    services.TryAddSingleton<IJobHostHttpMiddleware, CustomHttpHeadersMiddleware>();
+                    services.TryAddSingleton<IJobHostHttpMiddleware, HstsConfigurationMiddleware>();
 
                     // Make sure the registered IHostIdProvider is used
                     IHostIdProvider provider = rootServiceProvider.GetService<IHostIdProvider>();
@@ -102,6 +95,8 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
                     // Hosted services
                     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, HttpInitializationService>());
                     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, FileMonitoringService>());
+
+                    ConfigureRegisteredBuilders(services, rootServiceProvider);
                 });
 
             var debugStateProvider = rootServiceProvider.GetService<IDebugStateProvider>();

@@ -7,6 +7,7 @@ using Microsoft.Azure.WebJobs.Script;
 using Microsoft.Azure.WebJobs.Script.DependencyInjection;
 using Microsoft.Azure.WebJobs.Script.Eventing;
 using Microsoft.Azure.WebJobs.Script.ExtensionBundle;
+using Microsoft.Azure.WebJobs.Script.Rpc;
 using Microsoft.Azure.WebJobs.Script.Tests;
 using Microsoft.Azure.WebJobs.Script.WebHost;
 using Microsoft.Azure.WebJobs.Script.WebHost.DependencyInjection;
@@ -44,7 +45,10 @@ namespace Microsoft.WebJobs.Script.Tests
             AddMockedSingleton<IEnvironment>(services);
             AddMockedSingleton<IScriptWebHostEnvironment>(services);
             AddMockedSingleton<IEventGenerator>(services);
+            AddMockedSingleton<IFunctionDispatcher>(services);
             AddMockedSingleton<AspNetCore.Hosting.IApplicationLifetime>(services);
+            AddMockedSingleton<IDependencyValidator>(services);
+            services.AddSingleton<HostNameProvider>();
             services.AddWebJobsScriptHostRouting();
             services.AddLogging();
             services.AddScriptStartupTypeLocator();
@@ -68,7 +72,7 @@ namespace Microsoft.WebJobs.Script.Tests
             return builder;
         }
 
-        private static IServiceCollection AddMockedSingleton<T>(IServiceCollection services) where T : class
+        public static IServiceCollection AddMockedSingleton<T>(IServiceCollection services) where T : class
         {
             var mock = new Mock<T>();
             return services.AddSingleton<T>(mock.Object);

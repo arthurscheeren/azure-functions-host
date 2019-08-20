@@ -16,6 +16,7 @@ using Microsoft.Azure.WebJobs.Script.Config;
 using Microsoft.Azure.WebJobs.Script.Diagnostics;
 using Microsoft.Azure.WebJobs.Script.WebHost.Properties;
 using Microsoft.Extensions.Logging;
+using DataProtectionCostants = Microsoft.Azure.Web.DataProtection.Constants;
 
 namespace Microsoft.Azure.WebJobs.Script.WebHost
 {
@@ -25,6 +26,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
         private readonly IKeyValueConverterFactory _keyValueConverterFactory;
         private readonly ILogger _logger;
         private readonly ISecretsRepository _repository;
+        private readonly HostNameProvider _hostNameProvider;
         private HostSecretsInfo _hostSecrets;
         private SemaphoreSlim _hostSecretsLock = new SemaphoreSlim(1, 1);
         private IMetricsLogger _metricsLogger;
@@ -35,12 +37,12 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
         {
         }
 
-        public SecretManager(ISecretsRepository repository, ILogger logger, IMetricsLogger metricsLogger, bool createHostSecretsIfMissing = false)
-            : this(repository, new DefaultKeyValueConverterFactory(repository.IsEncryptionSupported), logger, metricsLogger, createHostSecretsIfMissing)
+        public SecretManager(ISecretsRepository repository, ILogger logger, IMetricsLogger metricsLogger, HostNameProvider hostNameProvider, bool createHostSecretsIfMissing = false)
+            : this(repository, new DefaultKeyValueConverterFactory(repository.IsEncryptionSupported), logger, metricsLogger, hostNameProvider, createHostSecretsIfMissing)
         {
         }
 
-        public SecretManager(ISecretsRepository repository, IKeyValueConverterFactory keyValueConverterFactory, ILogger logger, IMetricsLogger metricsLogger, bool createHostSecretsIfMissing = false)
+        public SecretManager(ISecretsRepository repository, IKeyValueConverterFactory keyValueConverterFactory, ILogger logger, IMetricsLogger metricsLogger, HostNameProvider hostNameProvider, bool createHostSecretsIfMissing = false)
         {
             _repository = repository;
             _keyValueConverterFactory = keyValueConverterFactory;
@@ -48,11 +50,11 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
             _logger = logger;
             _metricsLogger = metricsLogger ?? throw new ArgumentNullException(nameof(metricsLogger));
             _repositoryClassName = _repository.GetType().Name.ToLower();
+            _hostNameProvider = hostNameProvider;
 
             if (createHostSecretsIfMissing)
             {
-                // The SecretManager implementation of GetHostSecrets will
-                // create a host secret if one is not present.
+                // GetHostSecrets will create host secrets if not present
                 GetHostSecretsAsync().GetAwaiter().GetResult();
             }
         }
@@ -450,17 +452,14 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
 
         private async Task PersistSecretsAsync<T>(T secrets, string keyScope = null, bool isNonDecryptable = false) where T : ScriptSecrets
         {
+            if (secrets != null)
+            {
+                secrets.HostName = _hostNameProvider.Value;
+            }
+
             ScriptSecretsType secretsType = secrets.SecretsType;
             if (isNonDecryptable)
             {
-                string decryptionKey = SystemEnvironment.Instance.GetEnvironmentVariable(EnvironmentSettingNames.WebSiteAuthEncryptionKey);
-                if (!string.IsNullOrEmpty(decryptionKey))
-                {
-                    SHA256Managed hash = new SHA256Managed();
-                    byte[] hashBytes = hash.ComputeHash(Encoding.UTF8.GetBytes(decryptionKey));
-                    secrets.DecryptionKeyId = Convert.ToBase64String(hashBytes);
-                }
-
                 string[] secretBackups = await _repository.GetSecretSnapshots(secrets.SecretsType, keyScope);
 
                 if (secretBackups.Length >= ScriptConstants.MaximumSecretBackupCount)
@@ -473,6 +472,11 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
             }
             else
             {
+                // We want to store encryption keys hashes to investigate sudden regenerations
+                string hashes = GetEncryptionKeysHashes();
+                secrets.DecryptionKeyId = hashes;
+                _logger?.LogInformation("Encription keys hashes: {0}", hashes);
+
                 await _repository.WriteAsync(secretsType, keyScope, secrets);
             }
         }
@@ -524,8 +528,14 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
             }
             else
             {
-                Dictionary<string, string> secrets;
-                _secretsMap.TryRemove(e.Name, out secrets);
+                if (string.IsNullOrEmpty(e.Name))
+                {
+                    _secretsMap.Clear();
+                }
+                else
+                {
+                    _secretsMap.TryRemove(e.Name, out _);
+                }
             }
         }
 
@@ -581,6 +591,30 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
         private string GetFunctionName(string keyScope, ScriptSecretsType secretsType)
         {
             return (secretsType == ScriptSecretsType.Function) ? keyScope : null;
+        }
+
+        private string GetEncryptionKeysHashes()
+        {
+            string result = string.Empty;
+            string azureWebsiteLocalEncryptionKey = SystemEnvironment.Instance.GetEnvironmentVariable(DataProtectionCostants.AzureWebsiteLocalEncryptionKey) ?? string.Empty;
+            SHA256Managed hash = new SHA256Managed();
+
+            if (!string.IsNullOrEmpty(azureWebsiteLocalEncryptionKey))
+            {
+                byte[] hashBytes = hash.ComputeHash(Encoding.UTF8.GetBytes(azureWebsiteLocalEncryptionKey));
+                string azureWebsiteLocalEncryptionKeyHash = Convert.ToBase64String(hashBytes);
+                result += $"{DataProtectionCostants.AzureWebsiteLocalEncryptionKey}={azureWebsiteLocalEncryptionKeyHash};";
+            }
+
+            string azureWebsiteEnvironmentMachineKey = SystemEnvironment.Instance.GetEnvironmentVariable(DataProtectionCostants.AzureWebsiteEnvironmentMachineKey) ?? string.Empty;
+            if (!string.IsNullOrEmpty(azureWebsiteEnvironmentMachineKey))
+            {
+                byte[] hashBytes = hash.ComputeHash(Encoding.UTF8.GetBytes(azureWebsiteEnvironmentMachineKey));
+                string azureWebsiteEnvironmentMachineKeyHash = Convert.ToBase64String(hashBytes);
+                result += $"{DataProtectionCostants.AzureWebsiteEnvironmentMachineKey}={azureWebsiteEnvironmentMachineKeyHash};";
+            }
+
+            return result;
         }
     }
 }

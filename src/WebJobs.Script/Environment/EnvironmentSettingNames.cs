@@ -20,10 +20,13 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string TypeScriptCompilerPath = "AzureWebJobs_TypeScriptPath";
         public const string AzureWebsiteAppCountersName = "WEBSITE_COUNTERS_APP";
         public const string AzureWebJobsSecretStorageType = "AzureWebJobsSecretStorageType";
+        public const string AzureWebJobsSecretStorageSas = "AzureWebJobsSecretStorageSas";
         public const string AppInsightsInstrumentationKey = "APPINSIGHTS_INSTRUMENTATIONKEY";
         public const string AppInsightsQuickPulseAuthApiKey = "APPINSIGHTS_QUICKPULSEAUTHAPIKEY";
         public const string FunctionsExtensionVersion = "FUNCTIONS_EXTENSION_VERSION";
         public const string ContainerName = "CONTAINER_NAME";
+        public const string WebSiteHomeStampName = "WEBSITE_HOME_STAMPNAME";
+        public const string WebSiteStampDeploymentId = "WEBSITE_STAMP_DEPLOYMENT_ID";
         public const string WebSiteAuthEncryptionKey = "WEBSITE_AUTH_ENCRYPTION_KEY";
         public const string ContainerEncryptionKey = "CONTAINER_ENCRYPTION_KEY";
         public const string ConsoleLoggingDisabled = "CONSOLE_LOGGING_DISABLED";
@@ -32,6 +35,11 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string EasyAuthEnabled = "WEBSITE_AUTH_ENABLED";
         public const string AzureWebJobsSecretStorageKeyVaultName = "AzureWebJobsSecretStorageKeyVaultName";
         public const string AzureWebJobsSecretStorageKeyVaultConnectionString = "AzureWebJobsSecretStorageKeyVaultConnectionString";
+        public const string AzureWebsiteArmCacheEnabled = "WEBSITE_FUNCTIONS_ARMCACHE_ENABLED";
+        public const string MountEnabled = "WEBSITE_MOUNT_ENABLED";
+        public const string MsiEndpoint = "MSI_ENDPOINT";
+        public const string MsiSecret = "MSI_SECRET";
+        public const string DotnetSkipFirstTimeExperience = "DOTNET_SKIP_FIRST_TIME_EXPERIENCE";
 
         /// <summary>
         /// Environment variable dynamically set by the platform when it is safe to
@@ -50,13 +58,22 @@ namespace Microsoft.Azure.WebJobs.Script
         public const string AzureWebsiteRunFromPackage = "WEBSITE_RUN_FROM_PACKAGE";
         public const string RegionName = "REGION_NAME";
 
+        // handling server side builds
+        public const string ScmRunFromPackage = "SCM_RUN_FROM_PACKAGE";
+
         public const string LinuxAzureAppServiceStorage = "WEBSITES_ENABLE_APP_SERVICE_STORAGE";
         public const string CoreToolsEnvironment = "FUNCTIONS_CORETOOLS_ENVIRONMENT";
+        public const string RunningInContainer = "DOTNET_RUNNING_IN_CONTAINER";
 
         public const string ExtensionBundleSourceUri = "FUNCTIONS_EXTENSIONBUNDLE_SOURCE_URI";
 
         public const string FunctionsLogPath = "FUNCTIONS_LOG_PATH";
         public const string FunctionsSecretsPath = "FUNCTIONS_SECRETS_PATH";
         public const string FunctionsTestDataPath = "FUNCTIONS_TEST_DATA_PATH";
+        public const string LinuxNodeIpAddress = "Fabric_NodeIPOrFQDN";
+      
+        public const string AzureWebJobsKubernetesSecretName = "AzureWebJobsKubernetesSecretName";
+        public const string KubernetesServiceHost = "KUBERNETES_SERVICE_HOST";
+        public const string KubernetesServiceHttpsPort = "KUBERNETES_SERVICE_PORT_HTTPS";
     }
 }

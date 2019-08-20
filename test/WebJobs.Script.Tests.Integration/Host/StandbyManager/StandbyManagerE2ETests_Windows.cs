@@ -72,8 +72,9 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
             Assert.Equal(3, logLines.Count(p => p.Contains($"Loading functions metadata")));
             Assert.Equal(2, logLines.Count(p => p.Contains($"1 functions loaded")));
             Assert.Equal(1, logLines.Count(p => p.Contains($"0 functions loaded")));
-            Assert.Equal(1, logLines.Count(p => p.Contains($"Loading proxies metadata")));
-            Assert.Equal(1, logLines.Count(p => p.Contains("Initializing Azure Function proxies")));
+            Assert.Equal(3, logLines.Count(p => p.Contains($"Loading proxies metadata")));
+            Assert.Equal(3, logLines.Count(p => p.Contains("Initializing Azure Function proxies")));
+            Assert.Equal(2, logLines.Count(p => p.Contains($"1 proxies loaded")));
             Assert.Equal(1, logLines.Count(p => p.Contains($"0 proxies loaded")));
             Assert.Contains("Generating 0 job function(s)", logLines);
 
@@ -85,6 +86,19 @@ namespace Microsoft.Azure.WebJobs.Script.Tests
         public async Task StandbyModeE2E_Java()
         {
             _settings.Add(EnvironmentSettingNames.AzureWebsiteInstanceId, Guid.NewGuid().ToString());
+            await Verify_StandbyModeE2E_Java();
+        }
+
+        [Fact(Skip = "https://github.com/Azure/azure-functions-host/issues/4230")]
+        public async Task StandbyModeE2E_JavaTemplateSite()
+        {
+            _settings.Add(EnvironmentSettingNames.AzureWebsiteInstanceId, Guid.NewGuid().ToString());
+            _settings.Add(LanguageWorkerConstants.FunctionWorkerRuntimeSettingName, LanguageWorkerConstants.JavaLanguageWorkerName);
+            await Verify_StandbyModeE2E_Java();
+        }
+
+        private async Task Verify_StandbyModeE2E_Java()
+        {
             var environment = new TestEnvironment(_settings);
             await InitializeTestHostAsync("Windows_Java", environment);
 

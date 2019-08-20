@@ -53,7 +53,7 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
             _restart = _restart.Debounce(500);
 
             _shutdown = Shutdown;
-            _shutdown = _shutdown.Debounce(500);
+            _shutdown = _shutdown.Debounce(milliseconds: 500);
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -144,14 +144,15 @@ namespace Microsoft.Azure.WebJobs.Script.WebHost
             {
                 // app_offline.htm has changed
                 // when app_offline.htm is created, we trigger
-                // a shutdown so when the host starts back up it
-                // will be offline
+                // a shutdown right away so when the host
+                // starts back up it will be offline
                 // when app_offline.htm is deleted, we trigger
                 // a restart to bring the host back online
                 changeDescription = "File";
                 if (File.Exists(e.FullPath))
                 {
-                    shutdown = true;
+                    TraceFileChangeRestart(changeDescription, e.ChangeType.ToString(), e.FullPath, isShutdown: true);
+                    Shutdown();
                 }
             }
             else if (string.Compare(fileName, ScriptConstants.HostMetadataFileName, StringComparison.OrdinalIgnoreCase) == 0 ||

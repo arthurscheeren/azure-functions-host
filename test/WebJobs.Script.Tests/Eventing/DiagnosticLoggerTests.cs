@@ -4,8 +4,10 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Azure.WebJobs.Logging;
+using Microsoft.Azure.WebJobs.Script.WebHost;
 using Microsoft.Azure.WebJobs.Script.WebHost.Diagnostics;
 using Microsoft.Extensions.Logging;
+using Microsoft.WebJobs.Script.Tests;
 using Moq;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -24,6 +26,7 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Eventing
         private readonly Mock<IEventGenerator> _mockEventGenerator;
         private readonly IEnvironment _environment = new TestEnvironment();
         private readonly string _category = LogCategories.CreateFunctionCategory(_functionName);
+        private readonly HostNameProvider _hostNameProvider;
 
         public DiagnosticLoggerTests()
         {
@@ -34,7 +37,11 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Eventing
             _mockEventGenerator = new Mock<IEventGenerator>(MockBehavior.Strict);
 
             _category = LogCategories.CreateFunctionCategory(_functionName);
-            _logger = new AzureMonitorDiagnosticLogger(_category, _hostInstanceId, _mockEventGenerator.Object, _environment, new LoggerExternalScopeProvider());
+            var loggerProvider = new TestLoggerProvider();
+            var loggerFactory = new LoggerFactory();
+            loggerFactory.AddProvider(loggerProvider);
+            _hostNameProvider = new HostNameProvider(_environment, loggerFactory.CreateLogger<HostNameProvider>());
+            _logger = new AzureMonitorDiagnosticLogger(_category, _hostInstanceId, _mockEventGenerator.Object, _environment, new LoggerExternalScopeProvider(), _hostNameProvider);
         }
 
         [Fact]
@@ -161,6 +168,38 @@ namespace Microsoft.Azure.WebJobs.Script.Tests.Eventing
             });
 
             Assert.True(JToken.DeepEquals(actual, expected), $"Actual: {actual.ToString()}{Environment.NewLine}Expected: {expected.ToString()}");
+        }
+
+        [Fact]
+        public void Log_DisabledIfPlaceholder()
+        {
+            string message = "TestMessage";
+            string functionInvocationId = Guid.NewGuid().ToString();
+            string activityId = Guid.NewGuid().ToString();
+
+            _environment.SetEnvironmentVariable(EnvironmentSettingNames.AzureWebsitePlaceholderMode, "1");
+
+            _logger.LogInformation(message);
+
+            Assert.False(_logger.IsEnabled(LogLevel.Information));
+            _mockEventGenerator.Verify(m => m.LogAzureMonitorDiagnosticLogEvent(It.IsAny<LogLevel>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public void Log_DisabledIfNoSiteName()
+        {
+            string message = "TestMessage";
+            string functionInvocationId = Guid.NewGuid().ToString();
+            string activityId = Guid.NewGuid().ToString();
+            _environment.SetEnvironmentVariable(EnvironmentSettingNames.AzureWebsiteHostName, null);
+
+            // Recreate the logger was we cache the site name in the constructor
+            ILogger logger = new AzureMonitorDiagnosticLogger(_category, _hostInstanceId, _mockEventGenerator.Object, _environment, new LoggerExternalScopeProvider(), _hostNameProvider);
+
+            logger.LogInformation(message);
+
+            Assert.False(logger.IsEnabled(LogLevel.Information));
+            _mockEventGenerator.Verify(m => m.LogAzureMonitorDiagnosticLogEvent(It.IsAny<LogLevel>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         }
 
         // Creates a scope based on the non-null values passed in. Allows us to test various permutations and make sure that the logger handles them.
